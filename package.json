@@ -1,0 +1,42 @@
+{
+  "name": "splitfinpulse",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal-finance and shared-expense management platform",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.12 <23",
+    "pnpm": ">=11.17 <12"
+  },
+  "packageManager": "pnpm@11.17.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel --filter @splitfinpulse/api --filter @splitfinpulse/web dev",
+    "dev:api": "pnpm --filter @splitfinpulse/api dev",
+    "dev:web": "pnpm --filter @splitfinpulse/web dev",
+    "lint": "eslint . --max-warnings=0",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "test:e2e": "pnpm --filter @splitfinpulse/api test:e2e",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @splitfinpulse/api db:generate",
+    "db:migrate": "pnpm --filter @splitfinpulse/api db:migrate",
+    "db:migrate:deploy": "pnpm --filter @splitfinpulse/api db:migrate:deploy",
+    "db:studio": "pnpm --filter @splitfinpulse/api db:studio",
+    "docker:db:up": "docker compose up -d postgres",
+    "docker:db:down": "docker compose down",
+    "docker:db:logs": "docker compose logs -f postgres",
+    "postinstall": "pnpm db:generate"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.33.0",
+    "eslint": "^9.33.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-vue": "^10.4.0",
+    "globals": "^16.3.0",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.39.1"
+  }
+}
