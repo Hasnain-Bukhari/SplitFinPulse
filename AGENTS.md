@@ -83,6 +83,9 @@ Financial correctness outranks convenience.
 - Treat all client input as untrusted.
 - Never rely on hidden UI for authorization.
 - Never expose or log passwords, tokens, OAuth credentials, secrets, or full sensitive financial payloads.
+- Authentication credentials stay in HttpOnly cookies; never place them in JSON responses, URLs, Pinia, or browser storage.
+- Protected product routes use the global guard and authenticated principal. Mark a route public only when anonymous access is intentional.
+- Unsafe cookie-authenticated requests retain origin and CSRF validation; do not bypass it for convenience.
 - Keep CORS, rate limiting, secure headers, input limits, and upload validation intact.
 - Propagate the request ID through logs and errors.
 - Log unexpected failures; do not silently swallow exceptions.

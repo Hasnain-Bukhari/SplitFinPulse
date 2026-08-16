@@ -23,6 +23,7 @@ AGENTS.md       Operating rules for coding agents
 - Node.js 22.12 or newer in the Node 22 line (`.nvmrc` pins 22.16.0)
 - Corepack with pnpm 11.17
 - Docker Desktop or another Docker Compose-compatible runtime
+- A Google OAuth web client for interactive sign-in testing
 
 ## Installation
 
@@ -33,6 +34,11 @@ cp .env.example .env
 ```
 
 The committed example contains local-only credentials. Never commit real secrets.
+
+Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` from a Google OAuth web
+client. Register `http://localhost:3000/api/v1/auth/google/callback` as an
+authorized redirect URI. Replace all authentication and invitation secrets with
+different random values of at least 32 characters.
 
 ## Local development
 
@@ -61,10 +67,12 @@ pnpm lint
 pnpm typecheck
 pnpm test
 pnpm test:e2e
+pnpm test:browser
 pnpm build
 ```
 
-The end-to-end API suite requires PostgreSQL. Start it and apply migrations first.
+The API end-to-end suite requires PostgreSQL. The Playwright suite starts the
+web development server and requires a locally installed Chromium browser.
 
 ## Database commands
 
@@ -72,9 +80,22 @@ The end-to-end API suite requires PostgreSQL. Start it and apply migrations firs
 pnpm db:generate          # regenerate Prisma Client
 pnpm db:migrate           # create/apply a development migration
 pnpm db:migrate:deploy    # apply committed migrations
+pnpm db:seed              # run the idempotent seed entrypoint
 pnpm db:studio            # inspect local data
 ```
 
-The first migration will be created with the first real domain model; the bootstrap deliberately has no placeholder tables.
+Committed migrations are forward-only: never edit one that may have run outside
+your branch. Correct a released migration with a new migration. For a disposable
+local database only, stop Compose, remove its named volume explicitly, start it
+again, and run `pnpm db:migrate:deploy`; this destroys local data and is not a
+production recovery procedure.
+
+## Authentication
+
+Google sign-in is handled by the API using Authorization Code with PKCE. The
+application stores only its own short-lived, HttpOnly cookie credentials;
+Google tokens are discarded after identity validation. Profile, active-session,
+export, deactivation, reactivation, and deletion controls are available below
+Settings after sign-in.
 
 Read [docs/PROJECT.md](docs/PROJECT.md) before architectural work and [AGENTS.md](AGENTS.md) before using a coding agent.

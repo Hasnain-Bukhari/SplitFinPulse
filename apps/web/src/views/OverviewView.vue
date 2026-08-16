@@ -46,12 +46,10 @@ const summaryCards = [
           <Button disabled title="Available after account setup">
             <Plus :size="17" aria-hidden="true" /> Add an expense
           </Button>
-          <Button
-            variant="outline"
-            disabled
-            title="Available after account setup"
-          >
-            <UsersRound :size="17" aria-hidden="true" /> Create a group
+          <Button as-child variant="outline">
+            <RouterLink to="/groups/new">
+              <UsersRound :size="17" aria-hidden="true" /> Create a group
+            </RouterLink>
           </Button>
         </div>
       </div>

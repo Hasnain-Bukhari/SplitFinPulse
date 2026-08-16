@@ -10,7 +10,10 @@ Financial correctness, explainability, security, accessibility, and maintainabil
 
 Planned capabilities include authentication, profiles, accounts, income, personal and shared expenses, friends, groups, multiple payers, splits, balances, ledger entries, settlements, debt simplification, categories, budgets, recurring expenses, currencies, receipts, activity, comments, notifications, reminders, search, analytics, reports, administration, and carefully bounded AI assistance.
 
-The current milestone is infrastructure and application foundation only. No product capability or financial record type is implemented yet.
+The application foundation, account lifecycle, friendships, private user
+discovery, shareable friend invitations, permission-aware contact selection,
+and groups with role-based membership are implemented. No financial record type
+is implemented yet.
 
 ## Architecture
 
@@ -32,7 +35,7 @@ Workspace packages are deferred until multiple real consumers justify shared cod
 
 ## Core Domain Model
 
-The anticipated domain centers on users, accounts, groups, expenses, payers, split allocations, ledger entries, and settlements. The exact schema will be designed with the first product slices rather than committed speculatively.
+The anticipated domain centers on users, accounts, groups, expenses, payers, split allocations, ledger entries, and settlements. Friendships use one canonical participant pair with an authorized requester and preserved pending, accepted, declined, and removed states. Friend invitations are signed, expiring, single-use records whose raw tokens are never stored. Groups retain membership history, have one transferable owner, and use expiring, revocable, multi-use invitation links whose raw tokens are never stored. Remaining financial schema is designed with its first product slices rather than committed speculatively.
 
 Money is always an integer amount in currency minor units plus an ISO currency code. An expense describes an event; payer and split allocations explain funding and responsibility; immutable or history-preserving ledger records explain resulting obligations. Balances are projections over auditable records, never the primary mutable truth.
 
@@ -40,7 +43,7 @@ Money is always an integer amount in currency minor units plus an ISO currency c
 
 The bootstrap contains configuration, database, HTTP, and system-health infrastructure. Expected product boundaries are auth, users, accounts, friends, groups, expenses, splits, ledger, settlements, categories, budgets, currencies, recurring expenses, activities, comments, attachments, notifications, reminders, analytics, reports, and admin.
 
-Modules are created only as capabilities are implemented. Expenses, splits, ledger, and settlements require stronger domain separation and extensive pure tests.
+Modules are created only as capabilities are implemented. The Friends module owns friendship transitions, exact-email discovery, contact matching, and friend-invitation redemption. The Groups module owns group lifecycle, role permissions, membership history, ownership transfer, and group-invitation redemption. Expenses, splits, ledger, and settlements require stronger domain separation and extensive pure tests.
 
 ## Frontend Architecture
 
@@ -67,7 +70,18 @@ Multi-currency records retain their original amount and currency. Conversion pol
 
 ## Authentication & Authorization
 
-Authentication is not implemented. The first product slice will select secure web/PWA session semantics that can coexist with later native clients.
+Google OIDC uses a backend Authorization Code + PKCE flow with state and nonce
+validation. Google tokens are discarded after identity validation. The web PWA
+uses short-lived access JWT and rotating refresh JWT credentials in host-only,
+HttpOnly cookies, backed by revocable PostgreSQL session records. Refresh-token
+hashes, session versioning, origin validation, and double-submit CSRF protection
+provide rotation, replay detection, and immediate local revocation.
+
+Users can inspect/revoke sessions, update profile and formatting defaults,
+download the currently held account data, deactivate/reactivate, or irreversibly
+anonymize their account. Deleted users retain a tombstone UUID so later shared
+financial history cannot be corrupted. Custom avatar storage, alternate identity
+providers, MFA, notification delivery, and native token transport remain deferred.
 
 Authorization is always server-side. Every operation must validate ownership, group membership, roles, and expense participation as appropriate. Hiding a frontend control is never authorization.
 
@@ -115,23 +129,32 @@ The Vue application is an installable responsive PWA. Capacitor can wrap the web
 
 ## Current Implementation
 
-- pnpm workspace with strict TypeScript, ESLint, Prettier, and CI
+- pnpm workspace with strict TypeScript, ESLint, Prettier, local Git hooks, and CI
 - NestJS API with validated configuration, Prisma/PostgreSQL, structured logging, request IDs, security defaults, OpenAPI, liveness, readiness, and normalized errors
 - Vue PWA with responsive navigation, accessible empty dashboard shell, design tokens, themes, Pinia, TanStack Query, and a typed API client boundary
 - PostgreSQL Compose service and production-oriented API/web Dockerfiles
-- Unit and PostgreSQL-backed API integration coverage for the foundation
+- Unit, PostgreSQL-backed API integration, frontend component, and local browser test foundations
+- Google authentication, internal users/identities, rotating cookie sessions, profile/preferences, session controls, export, deactivation/reactivation, and deletion anonymization
+- Authorized friendship requests and lifecycle, exact-email/contact discovery,
+  responsive friends UI, and signed single-use shareable invitation links
+- Group creation, settings, archiving, safe deletion, one-owner role management,
+  history-preserving membership, and signed multi-use invitation links
 
-No users, authentication, accounts, groups, expenses, ledger entries, settlements, or other product records exist.
+No financial accounts, expenses, ledger entries, settlements, balances, or
+other financial records exist. Friend and group balance views deliberately
+remain uncomputed until ledger-derived balance queries are implemented.
 
 ## Roadmap
 
-1. Authentication and user-profile foundation, including server-side ownership primitives.
-2. Framework-independent money value objects and conservation tests.
-3. Accounts, friends, and groups with authorization boundaries.
-4. Expenses with multiple payers, split strategies, audit history, and deterministic ledger generation.
-5. Balances and partial/full settlements, then debt simplification.
-6. Categories, budgets, recurring expenses, currencies, attachments, activity, comments, and notifications.
-7. Search, analytics, reports, administration, native packaging, and evidence-driven AI assistance.
+This is an implementation sequence, not the Epic numbering used by the master
+product plan.
+
+1. Framework-independent money value objects and conservation tests.
+2. Accounts, friends, and groups with authorization boundaries.
+3. Expenses with multiple payers, split strategies, audit history, and deterministic ledger generation.
+4. Balances and partial/full settlements, then debt simplification.
+5. Categories, budgets, recurring expenses, currencies, attachments, activity, comments, and notifications.
+6. Search, analytics, reports, administration, native packaging, and evidence-driven AI assistance.
 
 ## Important Decisions
 

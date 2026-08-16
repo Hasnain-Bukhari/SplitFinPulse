@@ -8,5 +8,245 @@ datasource db {
   provider = "postgresql"
 }
 
-// Domain models and the first migration are intentionally added with the first
-// product capability. Placeholder persistence would create false architecture.
+enum UserStatus {
+  ACTIVE
+  DEACTIVATED
+  DELETED
+}
+
+enum AuthProvider {
+  GOOGLE
+}
+
+enum OidcIntent {
+  LOGIN
+  REAUTHENTICATE
+  REACTIVATE
+}
+
+enum AccountLifecycleEventType {
+  DATA_EXPORTED
+  DEACTIVATED
+  REACTIVATED
+  DELETED
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  REMOVED
+}
+
+enum GroupType {
+  TRIP
+  HOME
+  COUPLE
+  OTHER
+}
+
+enum GroupStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum GroupMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+model User {
+  id                    String                  @id @default(uuid()) @db.Uuid
+  email                 String?                 @unique @db.VarChar(320)
+  name                  String                  @db.VarChar(100)
+  avatarUrl             String?                 @db.VarChar(2048)
+  providerAvatarUrl     String?                 @db.VarChar(2048)
+  defaultCurrency       String                  @default("USD") @db.Char(3)
+  timezone              String                  @default("UTC") @db.VarChar(100)
+  locale                String                  @default("en-US") @db.VarChar(35)
+  notifyExpenseActivity Boolean                 @default(true)
+  notifyReminders       Boolean                 @default(true)
+  notifyInvitations     Boolean                 @default(true)
+  status                UserStatus              @default(ACTIVE)
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
+  deactivatedAt         DateTime?
+  deletedAt             DateTime?
+  identities            AuthIdentity[]
+  deletedIdentities     DeletedAuthIdentity[]
+  sessions              AuthSession[]
+  lifecycleEvents       AccountLifecycleEvent[]
+  friendshipsAsFirst    Friendship[]            @relation("FriendshipFirstUser")
+  friendshipsAsSecond   Friendship[]            @relation("FriendshipSecondUser")
+  friendshipRequests    Friendship[]            @relation("FriendshipRequester")
+  invitationsCreated    FriendInvitation[]      @relation("InvitationInviter")
+  invitationsAccepted   FriendInvitation[]      @relation("InvitationAcceptedBy")
+  groupsCreated         Group[]                 @relation("GroupCreator")
+  groupMemberships      GroupMember[]
+  groupInvitations      GroupInvitation[]       @relation("GroupInvitationCreator")
+
+  @@index([status])
+}
+
+model Group {
+  id                   String            @id @default(uuid()) @db.Uuid
+  name                 String            @db.VarChar(100)
+  type                 GroupType
+  status               GroupStatus       @default(ACTIVE)
+  defaultCurrency      String            @db.Char(3)
+  simplifyDebtsEnabled Boolean           @default(false)
+  createdById          String            @db.Uuid
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  archivedAt           DateTime?
+  createdBy            User              @relation("GroupCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  memberships          GroupMember[]
+  invitations          GroupInvitation[]
+
+  @@index([status, updatedAt, id])
+  @@index([createdById])
+}
+
+model GroupMember {
+  id        String          @id @default(uuid()) @db.Uuid
+  groupId   String          @db.Uuid
+  userId    String          @db.Uuid
+  role      GroupMemberRole @default(MEMBER)
+  joinedAt  DateTime        @default(now())
+  leftAt    DateTime?
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  group     Group           @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  user      User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([groupId, leftAt, updatedAt, id])
+  @@index([userId, leftAt, updatedAt, id])
+}
+
+model GroupInvitation {
+  id          String    @id @default(uuid()) @db.Uuid
+  groupId     String    @db.Uuid
+  createdById String    @db.Uuid
+  tokenDigest String    @unique @db.Char(64)
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  group       Group     @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  createdBy   User      @relation("GroupInvitationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+
+  @@index([groupId, createdAt, id])
+  @@index([createdById])
+  @@index([expiresAt])
+}
+
+model Friendship {
+  id            String           @id @default(uuid()) @db.Uuid
+  firstUserId   String           @db.Uuid
+  secondUserId  String           @db.Uuid
+  requestedById String           @db.Uuid
+  status        FriendshipStatus @default(PENDING)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  acceptedAt    DateTime?
+  declinedAt    DateTime?
+  removedAt     DateTime?
+  firstUser     User             @relation("FriendshipFirstUser", fields: [firstUserId], references: [id], onDelete: Restrict)
+  secondUser    User             @relation("FriendshipSecondUser", fields: [secondUserId], references: [id], onDelete: Restrict)
+  requestedBy   User             @relation("FriendshipRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+
+  @@unique([firstUserId, secondUserId])
+  @@index([firstUserId, status, updatedAt, id])
+  @@index([secondUserId, status, updatedAt, id])
+  @@index([requestedById, status, updatedAt, id])
+}
+
+model FriendInvitation {
+  id           String    @id @default(uuid()) @db.Uuid
+  inviterId    String    @db.Uuid
+  tokenDigest  String    @unique @db.Char(64)
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  revokedAt    DateTime?
+  acceptedById String?   @db.Uuid
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  inviter      User      @relation("InvitationInviter", fields: [inviterId], references: [id], onDelete: Restrict)
+  acceptedBy   User?     @relation("InvitationAcceptedBy", fields: [acceptedById], references: [id], onDelete: Restrict)
+
+  @@index([inviterId, createdAt])
+  @@index([expiresAt])
+  @@index([acceptedById])
+}
+
+model DeletedAuthIdentity {
+  id          String       @id @default(uuid()) @db.Uuid
+  userId      String       @db.Uuid
+  provider    AuthProvider
+  subjectHash String       @db.Char(64)
+  createdAt   DateTime     @default(now())
+  user        User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, subjectHash])
+  @@index([userId])
+}
+
+model AuthIdentity {
+  id              String       @id @default(uuid()) @db.Uuid
+  userId          String       @db.Uuid
+  provider        AuthProvider
+  providerSubject String       @db.VarChar(255)
+  providerEmail   String       @db.VarChar(320)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  user            User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([provider, providerSubject])
+  @@unique([userId, provider])
+  @@index([userId])
+}
+
+model AuthSession {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @db.Uuid
+  refreshTokenHash  String    @db.Char(64)
+  tokenVersion      Int       @default(1)
+  deviceDescription String    @db.VarChar(160)
+  absoluteExpiresAt DateTime
+  idleExpiresAt     DateTime
+  lastUsedAt        DateTime  @default(now())
+  reauthenticatedAt DateTime  @default(now())
+  revokedAt         DateTime?
+  revokedReason     String?   @db.VarChar(80)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  user              User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, revokedAt])
+  @@index([absoluteExpiresAt])
+}
+
+model OidcTransaction {
+  id           String     @id @default(uuid()) @db.Uuid
+  stateHash    String     @unique @db.Char(64)
+  codeVerifier String     @db.VarChar(512)
+  nonce        String     @db.VarChar(128)
+  intent       OidcIntent @default(LOGIN)
+  returnTo     String     @db.VarChar(500)
+  sessionId    String?    @db.Uuid
+  expiresAt    DateTime
+  createdAt    DateTime   @default(now())
+
+  @@index([expiresAt])
+}
+
+model AccountLifecycleEvent {
+  id        String                    @id @default(uuid()) @db.Uuid
+  userId    String                    @db.Uuid
+  type      AccountLifecycleEventType
+  createdAt DateTime                  @default(now())
+  user      User                      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt])
+}

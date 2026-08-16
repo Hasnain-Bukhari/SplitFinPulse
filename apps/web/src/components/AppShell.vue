@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { useQuery } from "@tanstack/vue-query";
+import { useMutation, useQuery } from "@tanstack/vue-query";
 import {
   Activity,
   ChevronLeft,
   CircleUserRound,
   LayoutDashboard,
+  LogOut,
   Menu,
   Settings,
+  ShieldCheck,
+  UserRoundPlus,
   UsersRound,
 } from "@lucide/vue";
 import { computed } from "vue";
-import { useRoute } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { api } from "@/lib/api/client";
+import { queryClient, sessionQueryOptions } from "@/lib/query-client";
 import { useUiStore } from "@/stores/ui";
 import BrandMark from "./BrandMark.vue";
 import ThemeToggle from "./ThemeToggle.vue";
@@ -19,22 +23,28 @@ import { Button } from "./ui/button";
 
 const navigation = [
   { label: "Overview", to: "/", icon: LayoutDashboard },
+  { label: "Friends", to: "/friends", icon: UserRoundPlus },
   { label: "Groups", to: "/groups", icon: UsersRound },
   { label: "Activity", to: "/activity", icon: Activity },
-  { label: "Settings", to: "/settings", icon: Settings },
+  { label: "Settings", to: "/settings/profile", icon: Settings },
 ];
 
 const route = useRoute();
+const router = useRouter();
 const ui = useUiStore();
+const session = useQuery(sessionQueryOptions);
 const pageTitle = computed(
   () =>
-    navigation.find((item) => item.to === route.path)?.label ?? "SplitFinPulse",
+    (typeof route.meta.title === "string" ? route.meta.title : undefined) ??
+    navigation.find((item) => item.to === route.path)?.label ??
+    "SplitFinPulse",
 );
-const health = useQuery({
-  queryKey: ["system", "health"],
-  queryFn: api.health,
-  retry: 1,
-  refetchInterval: 60_000,
+const logout = useMutation({
+  mutationFn: api.logout,
+  onSettled: async () => {
+    queryClient.clear();
+    await router.replace("/login");
+  },
 });
 </script>
 
@@ -53,11 +63,9 @@ const health = useQuery({
           aria-label="Collapse navigation"
           class="hidden size-8 lg:inline-flex"
           @click="ui.toggleSidebar"
-        >
-          <ChevronLeft :size="17" aria-hidden="true" />
-        </Button>
+          ><ChevronLeft :size="17" aria-hidden="true"
+        /></Button>
       </div>
-
       <nav
         aria-label="Primary navigation"
         class="flex flex-1 flex-col gap-1 px-3 py-5"
@@ -69,27 +77,17 @@ const health = useQuery({
           class="nav-link"
           :aria-label="ui.sidebarCollapsed ? item.label : undefined"
         >
-          <component :is="item.icon" :size="19" aria-hidden="true" />
-          <span v-if="!ui.sidebarCollapsed">{{ item.label }}</span>
+          <component :is="item.icon" :size="19" aria-hidden="true" /><span
+            v-if="!ui.sidebarCollapsed"
+            >{{ item.label }}</span
+          >
         </RouterLink>
       </nav>
-
       <div class="border-border border-t p-3">
         <div v-if="!ui.sidebarCollapsed" class="system-status">
-          <span
-            class="status-dot"
-            :class="
-              health.isSuccess.value
-                ? 'status-dot--online'
-                : 'status-dot--pending'
-            "
-            aria-hidden="true"
-          />
-          <span>{{
-            health.isSuccess.value
-              ? "Services connected"
-              : "Connecting services"
-          }}</span>
+          <ShieldCheck :size="15" aria-hidden="true" /><span
+            >Protected session</span
+          >
         </div>
         <Button
           v-else
@@ -98,9 +96,8 @@ const health = useQuery({
           aria-label="Expand navigation"
           class="w-full"
           @click="ui.toggleSidebar"
-        >
-          <Menu :size="18" aria-hidden="true" />
-        </Button>
+          ><Menu :size="18" aria-hidden="true"
+        /></Button>
       </div>
     </aside>
 
@@ -120,15 +117,27 @@ const health = useQuery({
         </div>
         <div class="flex items-center gap-1">
           <ThemeToggle />
-          <Button variant="ghost" size="icon" aria-label="Open profile">
-            <CircleUserRound :size="20" aria-hidden="true" />
-          </Button>
+          <details class="profile-menu">
+            <summary aria-label="Open profile menu">
+              <img
+                v-if="session.data.value?.user.avatarUrl"
+                :src="session.data.value.user.avatarUrl"
+                alt=""
+              /><CircleUserRound v-else :size="20" aria-hidden="true" />
+            </summary>
+            <div class="profile-menu__panel">
+              <strong>{{ session.data.value?.user.name }}</strong
+              ><small>{{ session.data.value?.user.email }}</small>
+              <RouterLink to="/settings/profile">Profile settings</RouterLink>
+              <RouterLink to="/settings/security">Security</RouterLink>
+              <button type="button" @click="logout.mutate()">
+                <LogOut :size="16" aria-hidden="true" /> Sign out
+              </button>
+            </div>
+          </details>
         </div>
       </header>
-
-      <main id="main-content" class="content-area">
-        <RouterView />
-      </main>
+      <main id="main-content" class="content-area"><RouterView /></main>
     </div>
 
     <nav aria-label="Mobile navigation" class="mobile-nav">
@@ -137,10 +146,10 @@ const health = useQuery({
         :key="item.to"
         :to="item.to"
         class="mobile-nav-link"
+        ><component :is="item.icon" :size="20" aria-hidden="true" /><span>{{
+          item.label
+        }}</span></RouterLink
       >
-        <component :is="item.icon" :size="20" aria-hidden="true" />
-        <span>{{ item.label }}</span>
-      </RouterLink>
     </nav>
   </div>
 </template>

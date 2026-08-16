@@ -10,9 +10,11 @@ import {
   type HealthResponse,
   type ReadinessResponse,
 } from "./health.service";
+import { Public } from "../http/public.decorator";
 
 @ApiTags("system")
 @Controller()
+@Public()
 export class HealthController {
   constructor(
     @Inject(HealthService) private readonly healthService: HealthService,

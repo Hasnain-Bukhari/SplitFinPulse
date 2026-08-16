@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import type { Response } from "express";
 import type { RequestWithId } from "./request-id.middleware";
+import { safeRequestPath } from "./safe-request-path";
 
 interface ErrorResponse {
   statusCode: number;
@@ -39,13 +40,18 @@ function errorDetails(
     : typeof rawMessage === "string"
       ? rawMessage
       : exception.message;
+  const explicitCode =
+    payload && "code" in payload && typeof payload.code === "string"
+      ? payload.code
+      : undefined;
 
   return {
     statusCode,
     code:
-      statusCode === HttpStatus.BAD_REQUEST
+      explicitCode ??
+      (statusCode === HttpStatus.BAD_REQUEST
         ? "VALIDATION_ERROR"
-        : `HTTP_${statusCode}`,
+        : `HTTP_${statusCode}`),
     message,
   };
 }
@@ -65,7 +71,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
         event: "unhandled_exception",
         requestId: request.requestId,
         method: request.method,
-        path: request.originalUrl,
+        path: safeRequestPath(request.originalUrl),
         error: exception instanceof Error ? exception.message : "Unknown error",
         stack: exception instanceof Error ? exception.stack : undefined,
       });
@@ -73,7 +79,7 @@ export class HttpExceptionFilter implements ExceptionFilter {
 
     response.status(details.statusCode).json({
       ...details,
-      path: request.originalUrl,
+      path: safeRequestPath(request.originalUrl),
       requestId: request.requestId,
       timestamp: new Date().toISOString(),
     } satisfies ErrorResponse);

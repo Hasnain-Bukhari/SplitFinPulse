@@ -1,6 +1,7 @@
 import { Injectable, Logger, type NestMiddleware } from "@nestjs/common";
 import type { NextFunction, Response } from "express";
 import type { RequestWithId } from "./request-id.middleware";
+import { safeRequestPath } from "./safe-request-path";
 
 @Injectable()
 export class RequestLoggerMiddleware implements NestMiddleware {
@@ -14,7 +15,7 @@ export class RequestLoggerMiddleware implements NestMiddleware {
         event: "request_completed",
         requestId: request.requestId,
         method: request.method,
-        path: request.originalUrl,
+        path: safeRequestPath(request.originalUrl),
         statusCode: response.statusCode,
         durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
       });

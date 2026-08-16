@@ -1,0 +1,90 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Inject,
+  Patch,
+  Post,
+  Res,
+} from "@nestjs/common";
+import { ApiBody, ApiCookieAuth, ApiTags } from "@nestjs/swagger";
+import type { Response } from "express";
+import type { AuthenticatedPrincipal } from "../auth/auth.types";
+import { CurrentPrincipal } from "../auth/current-principal.decorator";
+import { DeleteAccountDto, UpdateProfileDto } from "./user.dto";
+import { UsersService } from "./users.service";
+
+@ApiTags("Account")
+@ApiCookieAuth("sfp_access")
+@Controller("users/me")
+export class UsersController {
+  constructor(@Inject(UsersService) private readonly users: UsersService) {}
+
+  @Get()
+  me(@CurrentPrincipal() principal: AuthenticatedPrincipal) {
+    return this.users.me(principal.userId);
+  }
+
+  @Patch()
+  @ApiBody({ type: UpdateProfileDto })
+  update(
+    @CurrentPrincipal() principal: AuthenticatedPrincipal,
+    @Body() input: UpdateProfileDto,
+  ) {
+    return this.users.update(principal.userId, input);
+  }
+
+  @Get("preference-options")
+  preferenceOptions() {
+    return this.users.preferenceOptions();
+  }
+
+  @Post("export")
+  @HttpCode(HttpStatus.OK)
+  async exportAccount(
+    @CurrentPrincipal() principal: AuthenticatedPrincipal,
+    @Res() response: Response,
+  ): Promise<void> {
+    const data = await this.users.exportAccount(principal);
+    response
+      .status(HttpStatus.OK)
+      .setHeader("Content-Type", "application/json; charset=utf-8")
+      .setHeader(
+        "Content-Disposition",
+        `attachment; filename="splitfinpulse-account-${principal.userId}.json"`,
+      )
+      .send(JSON.stringify(data, null, 2));
+  }
+
+  @Post("deactivate")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deactivate(
+    @CurrentPrincipal() principal: AuthenticatedPrincipal,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<void> {
+    await this.users.deactivate(principal);
+    this.clearCookies(response);
+  }
+
+  @Delete()
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiBody({ type: DeleteAccountDto })
+  async deleteAccount(
+    @CurrentPrincipal() principal: AuthenticatedPrincipal,
+    @Body() input: DeleteAccountDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<void> {
+    void input;
+    await this.users.delete(principal);
+    this.clearCookies(response);
+  }
+
+  private clearCookies(response: Response): void {
+    response.clearCookie("sfp_access", { path: "/" });
+    response.clearCookie("sfp_refresh", { path: "/api/v1/auth" });
+    response.clearCookie("sfp_csrf", { path: "/" });
+  }
+}

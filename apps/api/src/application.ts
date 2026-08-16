@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import type { NestExpressApplication } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import type { Environment } from "./config/environment";
 import { HttpExceptionFilter } from "./http/http-exception.filter";
 
@@ -16,6 +17,7 @@ export function configureApplication(
     .map((origin) => origin.trim());
 
   application.use(helmet());
+  application.use(cookieParser());
   application.useBodyParser("json", { limit: "1mb" });
   application.useBodyParser("urlencoded", { extended: true, limit: "1mb" });
   application.enableCors({
@@ -42,6 +44,11 @@ export function configureApplication(
       "Client-agnostic API for personal finance and shared expenses",
     )
     .setVersion("1.0")
+    .addCookieAuth(
+      "sfp_access",
+      { type: "apiKey", in: "cookie", name: "sfp_access" },
+      "sfp_access",
+    )
     .build();
   const document = SwaggerModule.createDocument(application, openApiConfig);
   SwaggerModule.setup("api/docs", application, document, {

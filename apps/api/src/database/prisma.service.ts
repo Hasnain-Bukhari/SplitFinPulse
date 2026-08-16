@@ -7,7 +7,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import type { Environment } from "../config/environment";
-import { PrismaClient } from "../generated/prisma/client";
+import { Prisma, PrismaClient } from "../generated/prisma/client";
 
 @Injectable()
 export class PrismaService
@@ -34,5 +34,23 @@ export class PrismaService
   async isReady(): Promise<boolean> {
     await this.$queryRaw`SELECT 1`;
     return true;
+  }
+
+  async withTransaction<T>(
+    work: (transaction: Prisma.TransactionClient) => Promise<T>,
+    retries = 2,
+  ): Promise<T> {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await this.$transaction(work, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        const retryable =
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2034";
+        if (!retryable || attempt >= retries) throw error;
+      }
+    }
   }
 }
