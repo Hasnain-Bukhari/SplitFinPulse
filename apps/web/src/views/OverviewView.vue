@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useQuery } from "@tanstack/vue-query";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -10,22 +11,59 @@ import {
 } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { computed } from "vue";
+import { api } from "@/lib/api/client";
+import { useCurrencyFormatter } from "@/features/expenses/useCurrencyFormatter";
 
-const summaryCards = [
-  {
-    label: "Your balance",
-    value: "—",
-    helper: "No activity yet",
-    icon: WalletCards,
-  },
-  {
-    label: "Owed to you",
-    value: "—",
-    helper: "Nothing outstanding",
-    icon: ArrowDownLeft,
-  },
-  { label: "You owe", value: "—", helper: "All clear", icon: ArrowUpRight },
-];
+const balances = useQuery({
+  queryKey: ["balances", "overall"],
+  queryFn: () => api.balances(),
+});
+const { formatCurrency } = useCurrencyFormatter();
+const summaryCards = computed(() => {
+  const totals = balances.data.value?.totals ?? [];
+  if (!totals.length)
+    return [
+      {
+        label: "Your balance",
+        value: "—",
+        helper: balances.isPending.value ? "Loading…" : "No activity yet",
+        icon: WalletCards,
+      },
+      {
+        label: "Owed to you",
+        value: "—",
+        helper: "Nothing outstanding",
+        icon: ArrowDownLeft,
+      },
+      {
+        label: "You owe",
+        value: "—",
+        helper: "All clear",
+        icon: ArrowUpRight,
+      },
+    ];
+  return totals.flatMap((item) => [
+    {
+      label: `Your ${item.currency} balance`,
+      value: formatCurrency(item.netMinor, item.currency),
+      helper: "Net position",
+      icon: WalletCards,
+    },
+    {
+      label: `Owed to you · ${item.currency}`,
+      value: formatCurrency(item.youAreOwedMinor, item.currency),
+      helper: "Across active expenses",
+      icon: ArrowDownLeft,
+    },
+    {
+      label: `You owe · ${item.currency}`,
+      value: formatCurrency(item.youOweMinor, item.currency),
+      helper: "Across active expenses",
+      icon: ArrowUpRight,
+    },
+  ]);
+});
 </script>
 
 <template>
@@ -43,9 +81,11 @@ const summaryCards = [
           one calm, explainable view.
         </p>
         <div class="mt-6 flex flex-wrap gap-3">
-          <Button disabled title="Available after account setup">
-            <Plus :size="17" aria-hidden="true" /> Add an expense
-          </Button>
+          <Button as-child
+            ><RouterLink to="/expenses/new"
+              ><Plus :size="17" aria-hidden="true" /> Add an expense</RouterLink
+            ></Button
+          >
           <Button as-child variant="outline">
             <RouterLink to="/groups/new">
               <UsersRound :size="17" aria-hidden="true" /> Create a group
@@ -62,7 +102,9 @@ const summaryCards = [
           <p class="section-kicker">Snapshot</p>
           <h2 id="summary-title">Your financial position</h2>
         </div>
-        <span class="data-note">Amounts appear after setup</span>
+        <RouterLink class="data-note" to="/balances"
+          >View all balances</RouterLink
+        >
       </div>
       <div class="grid gap-3 sm:grid-cols-3">
         <Card

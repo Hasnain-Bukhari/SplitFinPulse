@@ -91,6 +91,10 @@ export class UsersService {
       currencies: listSupportedCurrencyCodes().map((code) => ({
         code,
         name: display.of(code) ?? code,
+        minorUnit: new Intl.NumberFormat("en", {
+          style: "currency",
+          currency: code,
+        }).resolvedOptions().maximumFractionDigits,
       })),
       timezones: [...this.timezones],
       locales: supportedLocales.map((code) => ({
@@ -124,8 +128,36 @@ export class UsersService {
         groupInvitations: { orderBy: { createdAt: "asc" } },
       },
     });
+    const expenses = await this.prisma.expense.findMany({
+      where: {
+        OR: [
+          { creatorId: principal.userId },
+          {
+            revisions: {
+              some: {
+                OR: [
+                  { payers: { some: { userId: principal.userId } } },
+                  { splits: { some: { userId: principal.userId } } },
+                ],
+              },
+            },
+          },
+        ],
+      },
+      include: {
+        revisions: {
+          include: {
+            payers: true,
+            splits: true,
+            ledgerEntries: true,
+          },
+          orderBy: { revision: "asc" },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       generatedAt: new Date().toISOString(),
       profile: presentUser(user),
       identities: user.identities.map((identity) => ({
@@ -189,6 +221,47 @@ export class UsersService {
         expiresAt: invitation.expiresAt,
         revokedAt: invitation.revokedAt,
         createdAt: invitation.createdAt,
+      })),
+      expenses: expenses.map((expense) => ({
+        id: expense.id,
+        creatorId: expense.creatorId,
+        groupId: expense.groupId,
+        friendshipId: expense.friendshipId,
+        status: expense.status,
+        version: expense.version,
+        currentRevisionId: expense.currentRevisionId,
+        createdAt: expense.createdAt,
+        updatedAt: expense.updatedAt,
+        deletedAt: expense.deletedAt,
+        revisions: expense.revisions.map((revision) => ({
+          id: revision.id,
+          revision: revision.revision,
+          action: revision.action,
+          actorId: revision.actorId,
+          description: revision.description,
+          totalMinor: revision.totalMinor.toString(),
+          currency: revision.currency,
+          expenseDate: revision.expenseDate,
+          notes: revision.notes,
+          splitMethod: revision.splitMethod,
+          createdAt: revision.createdAt,
+          payers: revision.payers.map((payer) => ({
+            userId: payer.userId,
+            amountMinor: payer.amountMinor.toString(),
+          })),
+          splits: revision.splits.map((split) => ({
+            userId: split.userId,
+            amountMinor: split.amountMinor.toString(),
+            inputValue: split.inputValue,
+          })),
+          ledgerEntries: revision.ledgerEntries.map((entry) => ({
+            sequence: entry.sequence,
+            debtorId: entry.debtorId,
+            creditorId: entry.creditorId,
+            amountMinor: entry.amountMinor.toString(),
+            currency: entry.currency,
+          })),
+        })),
       })),
     };
   }

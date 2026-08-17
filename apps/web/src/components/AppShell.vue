@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   UserRoundPlus,
   UsersRound,
+  WalletCards,
 } from "@lucide/vue";
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -24,6 +25,7 @@ import { Button } from "./ui/button";
 const navigation = [
   { label: "Overview", to: "/", icon: LayoutDashboard },
   { label: "Friends", to: "/friends", icon: UserRoundPlus },
+  { label: "Balances", to: "/balances", icon: WalletCards },
   { label: "Groups", to: "/groups", icon: UsersRound },
   { label: "Activity", to: "/activity", icon: Activity },
   { label: "Settings", to: "/settings/profile", icon: Settings },

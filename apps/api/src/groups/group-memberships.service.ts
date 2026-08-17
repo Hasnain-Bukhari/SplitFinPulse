@@ -204,6 +204,7 @@ export class GroupMembershipsService {
       }
       if (!canManageMember(actor.role, target.role)) throw groupForbidden();
       if (target.role === "OWNER") throw ownerRequired();
+      await this.requireZeroBalance(database, groupId, target.userId);
       await database.groupMember.update({
         where: { id: target.id },
         data: { leftAt: new Date() },
@@ -220,6 +221,7 @@ export class GroupMembershipsService {
       );
       await this.access.requireActiveGroup(database, groupId);
       if (membership.role === "OWNER") throw ownerRequired();
+      await this.requireZeroBalance(database, groupId, userId);
       await database.groupMember.update({
         where: { id: membership.id },
         data: { leftAt: new Date() },
@@ -241,5 +243,41 @@ export class GroupMembershipsService {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === "P2002"
     );
+  }
+
+  private async requireZeroBalance(
+    database: Prisma.TransactionClient,
+    groupId: string,
+    userId: string,
+  ): Promise<void> {
+    const entries = await database.ledgerEntry.findMany({
+      where: {
+        revision: { currentFor: { is: { status: "ACTIVE", groupId } } },
+        OR: [{ debtorId: userId }, { creditorId: userId }],
+      },
+      select: {
+        debtorId: true,
+        creditorId: true,
+        amountMinor: true,
+        currency: true,
+      },
+    });
+    const byCurrency = new Map<string, bigint>();
+    for (const entry of entries) {
+      byCurrency.set(
+        entry.currency,
+        (byCurrency.get(entry.currency) ?? 0n) +
+          (entry.creditorId === userId
+            ? entry.amountMinor
+            : -entry.amountMinor),
+      );
+    }
+    if ([...byCurrency.values()].some((net) => net !== 0n)) {
+      throw new ApiException(
+        HttpStatus.CONFLICT,
+        "OUTSTANDING_BALANCE",
+        "Settle the member's group balance before they leave",
+      );
+    }
   }
 }

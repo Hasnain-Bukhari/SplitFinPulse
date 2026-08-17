@@ -207,6 +207,16 @@ export class GroupsService {
       const membershipHistoryCount = await database.groupMember.count({
         where: { groupId },
       });
+      const financialHistoryCount = await database.expense.count({
+        where: { groupId },
+      });
+      if (financialHistoryCount > 0) {
+        throw new ApiException(
+          HttpStatus.CONFLICT,
+          "GROUP_DELETE_UNSAFE",
+          "Groups with financial history cannot be permanently deleted",
+        );
+      }
       if (membershipHistoryCount !== 1) {
         throw new ApiException(
           HttpStatus.CONFLICT,

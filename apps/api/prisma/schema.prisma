@@ -56,6 +56,25 @@ enum GroupMemberRole {
   MEMBER
 }
 
+enum ExpenseStatus {
+  ACTIVE
+  DELETED
+}
+
+enum ExpenseRevisionAction {
+  CREATED
+  UPDATED
+  DELETED
+  RESTORED
+}
+
+enum SplitMethod {
+  EQUAL
+  EXACT
+  PERCENTAGE
+  SHARES
+}
+
 model User {
   id                    String                  @id @default(uuid()) @db.Uuid
   email                 String?                 @unique @db.VarChar(320)
@@ -85,6 +104,13 @@ model User {
   groupsCreated         Group[]                 @relation("GroupCreator")
   groupMemberships      GroupMember[]
   groupInvitations      GroupInvitation[]       @relation("GroupInvitationCreator")
+  expensesCreated       Expense[]                @relation("ExpenseCreator")
+  expenseRevisionsMade  ExpenseRevision[]        @relation("ExpenseRevisionActor")
+  expensePayerRows      ExpensePayer[]
+  expenseSplitRows      ExpenseSplit[]
+  ledgerDebts           LedgerEntry[]             @relation("LedgerDebtor")
+  ledgerCredits         LedgerEntry[]             @relation("LedgerCreditor")
+  expenseIdempotencies  ExpenseIdempotency[]
 
   @@index([status])
 }
@@ -103,6 +129,7 @@ model Group {
   createdBy            User              @relation("GroupCreator", fields: [createdById], references: [id], onDelete: Restrict)
   memberships          GroupMember[]
   invitations          GroupInvitation[]
+  expenses             Expense[]
 
   @@index([status, updatedAt, id])
   @@index([createdById])
@@ -155,11 +182,118 @@ model Friendship {
   firstUser     User             @relation("FriendshipFirstUser", fields: [firstUserId], references: [id], onDelete: Restrict)
   secondUser    User             @relation("FriendshipSecondUser", fields: [secondUserId], references: [id], onDelete: Restrict)
   requestedBy   User             @relation("FriendshipRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  expenses      Expense[]
 
   @@unique([firstUserId, secondUserId])
   @@index([firstUserId, status, updatedAt, id])
   @@index([secondUserId, status, updatedAt, id])
   @@index([requestedById, status, updatedAt, id])
+}
+
+model Expense {
+  id              String        @id @default(uuid()) @db.Uuid
+  creatorId       String        @db.Uuid
+  groupId         String?       @db.Uuid
+  friendshipId    String?       @db.Uuid
+  status          ExpenseStatus @default(ACTIVE)
+  version         Int           @default(1)
+  currentRevisionId String?      @unique @db.Uuid
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
+  creator         User          @relation("ExpenseCreator", fields: [creatorId], references: [id], onDelete: Restrict)
+  group           Group?        @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  friendship      Friendship?   @relation(fields: [friendshipId], references: [id], onDelete: Restrict)
+  revisions       ExpenseRevision[] @relation("ExpenseRevisions")
+  currentRevision ExpenseRevision?  @relation("CurrentExpenseRevision", fields: [currentRevisionId], references: [id], onDelete: Restrict)
+  idempotencies   ExpenseIdempotency[]
+
+  @@index([groupId, status, updatedAt, id])
+  @@index([friendshipId, status, updatedAt, id])
+  @@index([creatorId, updatedAt, id])
+}
+
+model ExpenseRevision {
+  id          String                @id @default(uuid()) @db.Uuid
+  expenseId   String                @db.Uuid
+  revision    Int
+  action      ExpenseRevisionAction
+  actorId     String                @db.Uuid
+  description String                @db.VarChar(200)
+  totalMinor  BigInt
+  currency    String                @db.Char(3)
+  expenseDate DateTime              @db.Date
+  notes       String?               @db.VarChar(2000)
+  splitMethod SplitMethod
+  createdAt   DateTime              @default(now())
+  expense     Expense               @relation("ExpenseRevisions", fields: [expenseId], references: [id], onDelete: Restrict)
+  currentFor  Expense?              @relation("CurrentExpenseRevision")
+  actor       User                  @relation("ExpenseRevisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+  payers      ExpensePayer[]
+  splits      ExpenseSplit[]
+  ledgerEntries LedgerEntry[]
+
+  @@unique([expenseId, revision])
+  @@index([expenseId, createdAt, id])
+  @@index([actorId])
+}
+
+model ExpensePayer {
+  id          String          @id @default(uuid()) @db.Uuid
+  revisionId  String          @db.Uuid
+  userId      String          @db.Uuid
+  amountMinor BigInt
+  revision    ExpenseRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([revisionId, userId])
+  @@index([userId, revisionId])
+}
+
+model ExpenseSplit {
+  id          String          @id @default(uuid()) @db.Uuid
+  revisionId  String          @db.Uuid
+  userId      String          @db.Uuid
+  amountMinor BigInt
+  inputValue  String?         @db.VarChar(40)
+  revision    ExpenseRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([revisionId, userId])
+  @@index([userId, revisionId])
+}
+
+model LedgerEntry {
+  id          String          @id @default(uuid()) @db.Uuid
+  revisionId  String          @db.Uuid
+  sequence    Int
+  debtorId    String          @db.Uuid
+  creditorId  String          @db.Uuid
+  amountMinor BigInt
+  currency    String          @db.Char(3)
+  createdAt   DateTime        @default(now())
+  revision    ExpenseRevision @relation(fields: [revisionId], references: [id], onDelete: Restrict)
+  debtor      User            @relation("LedgerDebtor", fields: [debtorId], references: [id], onDelete: Restrict)
+  creditor    User            @relation("LedgerCreditor", fields: [creditorId], references: [id], onDelete: Restrict)
+
+  @@unique([revisionId, sequence])
+  @@index([debtorId, currency])
+  @@index([creditorId, currency])
+}
+
+model ExpenseIdempotency {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorId     String   @db.Uuid
+  operation   String   @db.VarChar(32)
+  key         String   @db.VarChar(128)
+  requestHash String   @db.Char(64)
+  expenseId   String   @db.Uuid
+  createdAt   DateTime @default(now())
+  actor       User     @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  expense     Expense  @relation(fields: [expenseId], references: [id], onDelete: Restrict)
+
+  @@unique([actorId, operation, key])
+  @@index([expenseId])
 }
 
 model FriendInvitation {

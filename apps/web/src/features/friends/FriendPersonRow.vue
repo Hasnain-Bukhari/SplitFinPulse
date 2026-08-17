@@ -1,13 +1,25 @@
 <script setup lang="ts">
-import { Check, UserRound, UserRoundMinus, X } from "@lucide/vue";
+import { useQuery } from "@tanstack/vue-query";
+import { computed } from "vue";
+import { Check, UserRound, UserRoundMinus, WalletCards, X } from "@lucide/vue";
 import type { FriendshipSummary } from "@/lib/api/client";
 import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api/client";
+import { useCurrencyFormatter } from "@/features/expenses/useCurrencyFormatter";
 
-defineProps<{
+const props = defineProps<{
   item: FriendshipSummary;
   kind: "accepted" | "incoming" | "outgoing";
   busy?: boolean;
 }>();
+const { formatCurrency } = useCurrencyFormatter();
+const balance = useQuery(
+  computed(() => ({
+    queryKey: ["balances", "friends", props.item.friendshipId],
+    queryFn: () => api.friendBalances(props.item.friendshipId),
+    enabled: props.kind === "accepted",
+  })),
+);
 
 defineEmits<{
   accept: [id: string];
@@ -34,7 +46,17 @@ defineEmits<{
     <div class="min-w-0 flex-1">
       <strong class="block truncate text-sm">{{ item.user.name }}</strong>
       <span v-if="kind === 'accepted'" class="text-muted-foreground text-xs">
-        Balance available with shared expenses
+        <template v-if="balance.data.value?.amounts.length">
+          {{
+            balance.data.value.amounts
+              .map((item) => formatCurrency(item.netMinor, item.currency))
+              .join(" · ")
+          }}
+          net
+        </template>
+        <template v-else>{{
+          balance.isPending.value ? "Loading balance…" : "Settled up"
+        }}</template>
       </span>
       <span v-else class="text-muted-foreground text-xs">
         {{ kind === "incoming" ? "Wants to connect" : "Request sent" }}
@@ -59,15 +81,22 @@ defineEmits<{
         <X :size="16" aria-hidden="true" />
       </Button>
     </div>
-    <Button
-      v-else-if="kind === 'accepted'"
-      variant="ghost"
-      size="icon"
-      :disabled="busy"
-      :aria-label="`Remove ${item.user.name}`"
-      @click="$emit('remove', item.friendshipId)"
-    >
-      <UserRoundMinus :size="17" aria-hidden="true" />
-    </Button>
+    <div v-else-if="kind === 'accepted'" class="flex gap-1">
+      <Button as-child variant="ghost" size="icon">
+        <RouterLink
+          :to="`/friends/${item.friendshipId}/balance`"
+          :aria-label="`View balance with ${item.user.name}`"
+          ><WalletCards :size="17" aria-hidden="true"
+        /></RouterLink>
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        :disabled="busy"
+        :aria-label="`Remove ${item.user.name}`"
+        @click="$emit('remove', item.friendshipId)"
+        ><UserRoundMinus :size="17" aria-hidden="true"
+      /></Button>
+    </div>
   </li>
 </template>

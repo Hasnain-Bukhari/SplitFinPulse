@@ -15,6 +15,8 @@ import { AuthModule } from "./auth/auth.module";
 import { UsersModule } from "./users/users.module";
 import { FriendsModule } from "./friends/friends.module";
 import { GroupsModule } from "./groups/groups.module";
+import { ExpensesModule } from "./expenses/expenses.module";
+import { BalancesModule } from "./balances/balances.module";
 
 @Module({
   imports: [
@@ -31,6 +33,8 @@ import { GroupsModule } from "./groups/groups.module";
     UsersModule,
     FriendsModule,
     GroupsModule,
+    ExpensesModule,
+    BalancesModule,
   ],
 })
 export class AppModule implements NestModule {

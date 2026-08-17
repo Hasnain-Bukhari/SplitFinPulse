@@ -45,7 +45,7 @@ function groupDetail(status: "ACTIVE" | "ARCHIVED" = "ACTIVE") {
   };
 }
 
-test("creates and manages a group with accessible deferred finance states", async ({
+test("creates and manages a group with accessible financial states", async ({
   page,
   context,
 }) => {
@@ -78,10 +78,23 @@ test("creates and manages a group with accessible deferred finance states", asyn
     }
     if (url.pathname.endsWith("/users/me/preference-options")) {
       return json({
-        currencies: [{ code: "THB", name: "Thai Baht" }],
+        currencies: [{ code: "THB", name: "Thai Baht", minorUnit: 2 }],
         timezones: [],
         locales: [],
       });
+    }
+    if (url.pathname.includes("/balances/groups/")) {
+      return json({
+        groupId: group.id,
+        simplifyDebtsEnabled: true,
+        currentUser: [],
+        positions: [],
+        rawObligations: [],
+        recommendations: [],
+      });
+    }
+    if (url.pathname.endsWith("/expenses") && request.method() === "GET") {
+      return json({ items: [], nextCursor: null });
     }
     if (url.pathname.endsWith("/groups") && request.method() === "POST") {
       group = groupDetail();
@@ -132,7 +145,9 @@ test("creates and manages a group with accessible deferred finance states", asyn
     page.getByRole("heading", { name: "Bangkok Weekend" }),
   ).toBeVisible();
   await expect(page.getByRole("heading", { name: "Balances" })).toBeVisible();
-  await expect(page.getByText("auditable ledger")).toBeVisible();
+  await expect(page.getByText("No outstanding balances.")).toBeVisible();
+  await expect(page.getByText("No expenses yet.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Add expense" })).toBeVisible();
 
   await page.getByRole("link", { name: "Manage" }).click();
   await page

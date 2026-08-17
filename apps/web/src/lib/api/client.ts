@@ -43,7 +43,7 @@ export interface SessionEnvelope {
 }
 
 export interface PreferenceOptions {
-  currencies: Array<{ code: string; name: string }>;
+  currencies: Array<{ code: string; name: string; minorUnit: number }>;
   timezones: string[];
   locales: Array<{ code: string; name: string }>;
 }
@@ -187,6 +187,190 @@ export interface GroupInvitationPreview {
   group: { name: string; type: GroupType };
   inviter: FriendUserSummary;
   expiresAt: string;
+}
+
+export type ExpenseStatus = "ACTIVE" | "DELETED";
+export type ExpenseSplitMethod = "EQUAL" | "EXACT" | "PERCENTAGE" | "SHARES";
+export type ExpenseRevisionAction =
+  "CREATED" | "UPDATED" | "DELETED" | "RESTORED";
+
+export interface ExpensePayerAllocation {
+  userId: string;
+  user?: FriendUserSummary;
+  amountMinor: string;
+}
+
+export interface ExpenseSplitAllocation {
+  userId: string;
+  user?: FriendUserSummary;
+  owedMinor: string;
+  input?: string;
+}
+
+export interface ExpenseLedgerEntry {
+  debtorId: string;
+  debtor?: FriendUserSummary;
+  creditorId: string;
+  creditor?: FriendUserSummary;
+  amountMinor: string;
+  currency: string;
+  sequence: number;
+}
+
+export interface ExpenseWriteInput {
+  groupId?: string;
+  friendshipId?: string;
+  description: string;
+  totalMinor: string;
+  currency: string;
+  expenseDate: string;
+  notes?: string;
+  payers: Array<{ userId: string; amountMinor: string }>;
+  splitMethod: ExpenseSplitMethod;
+  participants: Array<{ userId: string; input?: string }>;
+}
+
+export interface ExpensePreview {
+  totalMinor: string;
+  currency: string;
+  payers: ExpensePayerAllocation[];
+  splits: ExpenseSplitAllocation[];
+  ledgerEntries: ExpenseLedgerEntry[];
+}
+
+export interface ExpenseSummary {
+  id: string;
+  description: string;
+  totalMinor: string;
+  currency: string;
+  expenseDate: string;
+  status: ExpenseStatus;
+  groupId: string | null;
+  friendshipId: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExpensePermissions {
+  canEdit: boolean;
+  canDelete: boolean;
+  canRestore: boolean;
+}
+
+export interface ExpenseDetail extends ExpenseSummary {
+  notes: string | null;
+  creator: FriendUserSummary;
+  splitMethod: ExpenseSplitMethod;
+  payers: ExpensePayerAllocation[];
+  splits: ExpenseSplitAllocation[];
+  ledgerEntries: ExpenseLedgerEntry[];
+  permissions: ExpensePermissions;
+}
+
+export interface ExpensePage {
+  items: ExpenseSummary[];
+  nextCursor: string | null;
+}
+
+export interface ExpenseRevision {
+  id: string;
+  revisionNumber: number;
+  action: ExpenseRevisionAction;
+  actor: FriendUserSummary;
+  createdAt: string;
+  description: string;
+  totalMinor: string;
+  currency: string;
+  expenseDate: string;
+  notes: string | null;
+  splitMethod: ExpenseSplitMethod;
+  payers: ExpensePayerAllocation[];
+  splits: ExpenseSplitAllocation[];
+  ledgerEntries: ExpenseLedgerEntry[];
+}
+
+export interface ExpenseRevisionPage {
+  items: ExpenseRevision[];
+  nextCursor: string | null;
+}
+
+export interface BalanceAmount {
+  currency: string;
+  youOweMinor: string;
+  youAreOwedMinor: string;
+  netMinor: string;
+}
+
+export interface BalanceContextSummary {
+  contextType: "GROUP" | "FRIENDSHIP";
+  contextId: string;
+  name: string;
+  amounts: BalanceAmount[];
+}
+
+export interface OverallBalances {
+  totals: BalanceAmount[];
+  contexts: BalanceContextSummary[];
+  nextCursor: string | null;
+}
+
+export interface BalancePosition {
+  user: FriendUserSummary;
+  currency: string;
+  netMinor: string;
+}
+
+export interface BalanceTransfer {
+  from: FriendUserSummary;
+  to: FriendUserSummary;
+  amountMinor: string;
+  currency: string;
+}
+
+export interface GroupBalances {
+  groupId: string;
+  simplifyDebtsEnabled: boolean;
+  currentUser: BalanceAmount[];
+  positions: BalancePosition[];
+  rawObligations: BalanceTransfer[];
+  recommendations: BalanceTransfer[];
+}
+
+export interface FriendBalances {
+  friendshipId: string;
+  friend: FriendUserSummary;
+  amounts: BalanceAmount[];
+}
+
+export interface BalanceBreakdownItem {
+  expense: ExpenseSummary;
+  amountMinor: string;
+  direction: "OWE" | "OWED";
+  counterparty: FriendUserSummary;
+}
+
+export interface BalanceBreakdownPage {
+  items: BalanceBreakdownItem[];
+  nextCursor: string | null;
+}
+
+export interface ExpenseListFilters {
+  cursor?: string;
+  groupId?: string;
+  friendshipId?: string;
+  status?: ExpenseStatus;
+  currency?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+export interface BalanceBreakdownFilters {
+  cursor?: string;
+  groupId?: string;
+  friendshipId?: string;
+  counterpartyId?: string;
+  currency?: string;
 }
 
 export class ApiError extends Error {
@@ -444,6 +628,75 @@ export const api = {
     request(`/api/v1/group-invitations/${encodeURIComponent(token)}/accept`, {
       method: "POST",
     }),
+  previewExpense: (input: ExpenseWriteInput): Promise<ExpensePreview> =>
+    request("/api/v1/expenses/preview", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  createExpense: (
+    input: ExpenseWriteInput,
+    idempotencyKey: string,
+  ): Promise<ExpenseDetail> =>
+    request("/api/v1/expenses", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(input),
+    }),
+  expenses: (filters: ExpenseListFilters = {}): Promise<ExpensePage> => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) query.set(key, value);
+    }
+    const suffix = query.size ? `?${query}` : "";
+    return request(`/api/v1/expenses${suffix}`);
+  },
+  expense: (id: string): Promise<ExpenseDetail> =>
+    request(`/api/v1/expenses/${encodeURIComponent(id)}`),
+  expenseRevisions: (
+    id: string,
+    cursor?: string,
+  ): Promise<ExpenseRevisionPage> =>
+    request(
+      `/api/v1/expenses/${encodeURIComponent(id)}/revisions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
+  updateExpense: (
+    id: string,
+    input: ExpenseWriteInput,
+    version: number,
+  ): Promise<ExpenseDetail> =>
+    request(`/api/v1/expenses/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "If-Match": String(version) },
+      body: JSON.stringify(input),
+    }),
+  deleteExpense: (id: string, version: number): Promise<ExpenseDetail> =>
+    request(`/api/v1/expenses/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { "If-Match": String(version) },
+    }),
+  restoreExpense: (id: string, version: number): Promise<ExpenseDetail> =>
+    request(`/api/v1/expenses/${encodeURIComponent(id)}/restore`, {
+      method: "POST",
+      headers: { "If-Match": String(version) },
+    }),
+  balances: (cursor?: string): Promise<OverallBalances> =>
+    request(
+      `/api/v1/balances${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
+  groupBalances: (id: string): Promise<GroupBalances> =>
+    request(`/api/v1/balances/groups/${encodeURIComponent(id)}`),
+  friendBalances: (id: string): Promise<FriendBalances> =>
+    request(`/api/v1/balances/friends/${encodeURIComponent(id)}`),
+  balanceBreakdown: (
+    filters: BalanceBreakdownFilters = {},
+  ): Promise<BalanceBreakdownPage> => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) query.set(key, value);
+    }
+    const suffix = query.size ? `?${query}` : "";
+    return request(`/api/v1/balances/breakdown${suffix}`);
+  },
   googleLoginUrl: (returnTo = "/"): string =>
     `${apiBaseUrl}/api/v1/auth/google/start?returnTo=${encodeURIComponent(returnTo)}`,
 };

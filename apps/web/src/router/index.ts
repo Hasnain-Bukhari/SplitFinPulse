@@ -16,6 +16,12 @@ import GroupDetailView from "@/views/GroupDetailView.vue";
 import GroupInvitationView from "@/views/GroupInvitationView.vue";
 import GroupSettingsView from "@/views/GroupSettingsView.vue";
 import GroupsView from "@/views/GroupsView.vue";
+import CreateExpenseView from "@/views/CreateExpenseView.vue";
+import EditExpenseView from "@/views/EditExpenseView.vue";
+import ExpenseDetailView from "@/views/ExpenseDetailView.vue";
+import BalancesView from "@/views/BalancesView.vue";
+import GroupBalancesView from "@/views/GroupBalancesView.vue";
+import FriendBalanceView from "@/views/FriendBalanceView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -53,6 +59,30 @@ export const router = createRouter({
       children: [
         { path: "", name: "overview", component: OverviewView },
         {
+          path: "expenses/new",
+          name: "create-expense",
+          component: CreateExpenseView,
+          meta: { title: "Add expense" },
+        },
+        {
+          path: "expenses/:expenseId",
+          name: "expense-detail",
+          component: ExpenseDetailView,
+          meta: { title: "Expense" },
+        },
+        {
+          path: "expenses/:expenseId/edit",
+          name: "edit-expense",
+          component: EditExpenseView,
+          meta: { title: "Edit expense" },
+        },
+        {
+          path: "balances",
+          name: "balances",
+          component: BalancesView,
+          meta: { title: "Balances" },
+        },
+        {
           path: "friends",
           name: "friends",
           component: FriendsView,
@@ -81,6 +111,18 @@ export const router = createRouter({
           name: "group-settings",
           component: GroupSettingsView,
           meta: { title: "Group settings" },
+        },
+        {
+          path: "groups/:groupId/balances",
+          name: "group-balances",
+          component: GroupBalancesView,
+          meta: { title: "Group balances" },
+        },
+        {
+          path: "friends/:friendshipId/balance",
+          name: "friend-balance",
+          component: FriendBalanceView,
+          meta: { title: "Friend balance" },
         },
         {
           path: "activity",

@@ -12,8 +12,11 @@ Planned capabilities include authentication, profiles, accounts, income, persona
 
 The application foundation, account lifecycle, friendships, private user
 discovery, shareable friend invitations, permission-aware contact selection,
-and groups with role-based membership are implemented. No financial record type
-is implemented yet.
+and groups with role-based membership are implemented. The financial core now
+supports versioned friend and group expenses, deterministic split and ledger
+calculations, ledger-derived balances, and non-destructive debt-simplification
+recommendations. Settlements and the later supporting capabilities remain
+deferred.
 
 ## Architecture
 
@@ -35,7 +38,7 @@ Workspace packages are deferred until multiple real consumers justify shared cod
 
 ## Core Domain Model
 
-The anticipated domain centers on users, accounts, groups, expenses, payers, split allocations, ledger entries, and settlements. Friendships use one canonical participant pair with an authorized requester and preserved pending, accepted, declined, and removed states. Friend invitations are signed, expiring, single-use records whose raw tokens are never stored. Groups retain membership history, have one transferable owner, and use expiring, revocable, multi-use invitation links whose raw tokens are never stored. Remaining financial schema is designed with its first product slices rather than committed speculatively.
+The domain centers on users, accounts, groups, expenses, payers, split allocations, ledger entries, and settlements. Friendships use one canonical participant pair with an authorized requester and preserved pending, accepted, declined, and removed states. Friend invitations are signed, expiring, single-use records whose raw tokens are never stored. Groups retain membership history, have one transferable owner, and use expiring, revocable, multi-use invitation links whose raw tokens are never stored. Expenses have a stable identity and immutable revision snapshots containing payer, split, and ledger rows; only the current active revision contributes to balances. Further financial schema is designed with its first product slice rather than committed speculatively.
 
 Money is always an integer amount in currency minor units plus an ISO currency code. An expense describes an event; payer and split allocations explain funding and responsibility; immutable or history-preserving ledger records explain resulting obligations. Balances are projections over auditable records, never the primary mutable truth.
 
@@ -43,7 +46,7 @@ Money is always an integer amount in currency minor units plus an ISO currency c
 
 The bootstrap contains configuration, database, HTTP, and system-health infrastructure. Expected product boundaries are auth, users, accounts, friends, groups, expenses, splits, ledger, settlements, categories, budgets, currencies, recurring expenses, activities, comments, attachments, notifications, reminders, analytics, reports, and admin.
 
-Modules are created only as capabilities are implemented. The Friends module owns friendship transitions, exact-email discovery, contact matching, and friend-invitation redemption. The Groups module owns group lifecycle, role permissions, membership history, ownership transfer, and group-invitation redemption. Expenses, splits, ledger, and settlements require stronger domain separation and extensive pure tests.
+Modules are created only as capabilities are implemented. The Friends module owns friendship transitions, exact-email discovery, contact matching, and friend-invitation redemption. The Groups module owns group lifecycle, role permissions, membership history, ownership transfer, and group-invitation redemption. Expenses, splits, and ledger use stronger domain separation and extensive pure tests; settlements will follow the same financial boundary when introduced.
 
 ## Frontend Architecture
 
@@ -139,10 +142,14 @@ The Vue application is an installable responsive PWA. Capacitor can wrap the web
   responsive friends UI, and signed single-use shareable invitation links
 - Group creation, settings, archiving, safe deletion, one-owner role management,
   history-preserving membership, and signed multi-use invitation links
+- Friend and group expenses with multiple payers, equal/exact/percentage/share
+  splits, immutable revisions, idempotent creation, optimistic concurrency,
+  reversible deletion, and auditable ledger entries
+- Overall, per-friend, and per-group multi-currency balance projections with
+  expense drill-down and deterministic, non-destructive debt simplification
 
-No financial accounts, expenses, ledger entries, settlements, balances, or
-other financial records exist. Friend and group balance views deliberately
-remain uncomputed until ledger-derived balance queries are implemented.
+No settlement, personal financial account, budget, recurring-expense, receipt,
+or currency-conversion records exist yet.
 
 ## Roadmap
 

@@ -135,4 +135,50 @@ describe("API client", () => {
       body: JSON.stringify({ userId: "user-2" }),
     });
   });
+
+  it("sends financial idempotency and concurrency headers", async () => {
+    const body = JSON.stringify({ id: "expense-1", version: 2 });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(body, {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(body, {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const input = {
+      groupId: "group-1",
+      description: "Dinner",
+      totalMinor: "1250",
+      currency: "USD",
+      expenseDate: "2026-08-17",
+      payers: [{ userId: "user-1", amountMinor: "1250" }],
+      splitMethod: "EQUAL" as const,
+      participants: [{ userId: "user-1" }, { userId: "user-2" }],
+    };
+
+    await api.createExpense(input, "expense-request-1");
+    await api.updateExpense("expense/1", input, 7);
+
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({
+        "Idempotency-Key": "expense-request-1",
+      }),
+    });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "http://localhost:3000/api/v1/expenses/expense%2F1",
+    );
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      method: "PATCH",
+      headers: expect.objectContaining({ "If-Match": "7" }),
+    });
+  });
 });
