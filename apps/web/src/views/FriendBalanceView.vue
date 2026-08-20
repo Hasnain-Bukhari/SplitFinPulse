@@ -1,20 +1,45 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
-import { computed } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import BalanceAmounts from "@/features/balances/BalanceAmounts.vue";
 import BalanceBreakdown from "@/features/balances/BalanceBreakdown.vue";
 import SettlementHistory from "@/features/settlements/SettlementHistory.vue";
+import { useCurrencyFormatter } from "@/features/expenses/useCurrencyFormatter";
 import { api } from "@/lib/api/client";
+import { sessionQueryOptions } from "@/lib/query-client";
 
 const route = useRoute();
 const friendshipId = computed(() => String(route.params.friendshipId));
+const { formatCurrency } = useCurrencyFormatter();
+const reportingCurrency = ref("");
+const session = useQuery(sessionQueryOptions);
+const currencies = useQuery({
+  queryKey: ["profile", "options"],
+  queryFn: () => api.profileOptions(),
+});
+watch(
+  () => session.data.value?.user.defaultCurrency,
+  (value) => {
+    if (value && !reportingCurrency.value) reportingCurrency.value = value;
+  },
+  { immediate: true },
+);
 const balances = useQuery(
   computed(() => ({
-    queryKey: ["balances", "friends", friendshipId.value],
-    queryFn: () => api.friendBalances(friendshipId.value),
+    queryKey: [
+      "balances",
+      "friends",
+      friendshipId.value,
+      reportingCurrency.value,
+    ],
+    queryFn: () =>
+      api.friendBalances(
+        friendshipId.value,
+        reportingCurrency.value || undefined,
+      ),
   })),
 );
 </script>
@@ -59,10 +84,40 @@ const balances = useQuery(
             ></Button
           >
         </div>
+        <label class="text-sm"
+          >Reporting currency
+          <select v-model="reportingCurrency" class="ml-2">
+            <option value="">Native only</option>
+            <option
+              v-for="item in currencies.data.value?.currencies ?? []"
+              :key="item.code"
+              :value="item.code"
+            >
+              {{ item.code }} — {{ item.name }}
+            </option>
+          </select></label
+        >
       </div>
       <Card class="p-5"
         ><BalanceAmounts :amounts="balances.data.value.amounts"
       /></Card>
+      <Card v-if="balances.data.value.convertedSummary" class="p-5">
+        <p class="section-kicker">Converted view</p>
+        <strong class="tabular-nums text-lg">{{
+          formatCurrency(
+            balances.data.value.convertedSummary.netMinor,
+            balances.data.value.convertedSummary.reportingCurrency,
+          )
+        }}</strong>
+        <p class="text-muted-foreground mt-1 text-xs">
+          Write-time snapshots ·
+          {{
+            balances.data.value.convertedSummary.incomplete
+              ? "incomplete; native balances remain authoritative"
+              : "all entries converted"
+          }}
+        </p>
+      </Card>
       <Card class="p-5"
         ><p class="section-kicker">Traceability</p>
         <h2 class="mb-3 font-bold">Balance history</h2>

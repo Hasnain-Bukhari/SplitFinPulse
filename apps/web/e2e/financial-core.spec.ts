@@ -42,6 +42,25 @@ function expenseDetail(status: "ACTIVE" | "DELETED", version: number) {
       canDelete: status === "ACTIVE",
       canRestore: status === "DELETED",
     },
+    category: null,
+    valuation: null,
+    settlement: {
+      state: "OPEN",
+      allocatedMinor: "0",
+      remainingMinor: "15000",
+      obligations: [
+        {
+          sequence: 0,
+          debtorId: member.id,
+          creditorId: owner.id,
+          originalMinor: "15000",
+          allocatedMinor: "0",
+          remainingMinor: "15000",
+          currency: "THB",
+        },
+      ],
+      resolvingSettlements: [],
+    },
   };
 }
 

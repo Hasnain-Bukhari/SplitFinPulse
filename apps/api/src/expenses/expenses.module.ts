@@ -4,9 +4,11 @@ import { AuditModule } from "../audit/audit.module";
 import { ExpensesController } from "./expenses.controller";
 import { ExpenseAccessService } from "./expense-access.service";
 import { ExpensesService } from "./expenses.service";
+import { CategoriesModule } from "../categories/categories.module";
+import { CurrenciesModule } from "../currencies/currencies.module";
 
 @Module({
-  imports: [ActivitiesModule, AuditModule],
+  imports: [ActivitiesModule, AuditModule, CategoriesModule, CurrenciesModule],
   controllers: [ExpensesController],
   providers: [ExpenseAccessService, ExpensesService],
   exports: [ExpenseAccessService, ExpensesService],

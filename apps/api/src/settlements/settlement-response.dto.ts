@@ -4,7 +4,10 @@ import {
   SettlementRevisionAction,
   SettlementStatus,
 } from "../generated/prisma/client";
-import { FinancialUserDto } from "../expenses/financial-response.dto";
+import {
+  FinancialUserDto,
+  ValuationSnapshotResponseDto,
+} from "../expenses/financial-response.dto";
 
 export class SettlementPermissionsDto {
   @ApiProperty({ type: Boolean }) canReverse!: boolean;
@@ -37,6 +40,11 @@ export class SettlementDetailResponseDto {
   replacementSettlementId!: string | null;
   @ApiProperty({ type: String, format: "date-time" }) createdAt!: Date;
   @ApiProperty({ type: String, format: "date-time" }) updatedAt!: Date;
+  @ApiPropertyOptional({
+    type: () => ValuationSnapshotResponseDto,
+    nullable: true,
+  })
+  valuation!: ValuationSnapshotResponseDto | null;
   @ApiProperty({ type: SettlementPermissionsDto })
   permissions!: SettlementPermissionsDto;
 }

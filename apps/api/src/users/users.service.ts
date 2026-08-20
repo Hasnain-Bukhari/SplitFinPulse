@@ -14,7 +14,7 @@ import type { AuthenticatedPrincipal } from "../auth/auth.types";
 import type { UpdateProfileDto } from "./user.dto";
 import {
   isSupportedCurrencyCode,
-  listSupportedCurrencyCodes,
+  listCurrencyMetadata,
 } from "../currencies/currency-codes";
 
 const supportedLocales = ["en-US", "en-GB", "th-TH", "ur-PK", "hi-IN"];
@@ -103,13 +103,9 @@ export class UsersService {
   preferenceOptions() {
     const display = new Intl.DisplayNames(["en"], { type: "currency" });
     return {
-      currencies: listSupportedCurrencyCodes().map((code) => ({
-        code,
-        name: display.of(code) ?? code,
-        minorUnit: new Intl.NumberFormat("en", {
-          style: "currency",
-          currency: code,
-        }).resolvedOptions().maximumFractionDigits,
+      currencies: listCurrencyMetadata().map((item) => ({
+        ...item,
+        name: display.of(item.code) ?? item.name,
       })),
       timezones: [...this.timezones],
       locales: supportedLocales.map((code) => ({
@@ -179,11 +175,13 @@ export class UsersService {
         ],
       },
       include: {
+        attachments: { include: { extraction: true } },
         revisions: {
           include: {
             payers: true,
             splits: true,
             ledgerEntries: true,
+            exchangeRateSet: { include: { quotes: true } },
           },
           orderBy: { revision: "asc" },
         },
@@ -209,14 +207,22 @@ export class UsersService {
       },
       include: {
         revisions: {
-          include: { ledgerEntries: true },
+          include: {
+            ledgerEntries: true,
+            allocations: true,
+            exchangeRateSet: { include: { quotes: true } },
+          },
           orderBy: { revision: "asc" },
         },
       },
       orderBy: { createdAt: "asc" },
     });
+    const categories = await this.prisma.category.findMany({
+      where: { ownerId: principal.userId },
+      orderBy: { createdAt: "asc" },
+    });
     return {
-      schemaVersion: 3,
+      schemaVersion: 4,
       generatedAt: new Date().toISOString(),
       profile: presentUser(user),
       identities: user.identities.map((identity) => ({
@@ -281,6 +287,15 @@ export class UsersService {
         revokedAt: invitation.revokedAt,
         createdAt: invitation.createdAt,
       })),
+      categories: categories.map((category) => ({
+        id: category.id,
+        key: category.key,
+        name: category.name,
+        icon: category.icon,
+        archivedAt: category.archivedAt,
+        createdAt: category.createdAt,
+        updatedAt: category.updatedAt,
+      })),
       expenses: expenses.map((expense) => ({
         id: expense.id,
         creatorId: expense.creatorId,
@@ -303,6 +318,14 @@ export class UsersService {
           expenseDate: revision.expenseDate,
           notes: revision.notes,
           splitMethod: revision.splitMethod,
+          category: revision.categoryName
+            ? {
+                id: revision.categoryId,
+                name: revision.categoryName,
+                icon: revision.categoryIcon,
+              }
+            : null,
+          valuation: this.exportValuation(revision.exchangeRateSet),
           createdAt: revision.createdAt,
           payers: revision.payers.map((payer) => ({
             userId: payer.userId,
@@ -320,6 +343,28 @@ export class UsersService {
             amountMinor: entry.amountMinor.toString(),
             currency: entry.currency,
           })),
+        })),
+        attachments: expense.attachments.map((attachment) => ({
+          id: attachment.id,
+          originalName: attachment.originalName,
+          detectedMime: attachment.detectedMime,
+          sizeBytes: attachment.sizeBytes,
+          sha256: attachment.sha256,
+          status: attachment.status,
+          scanStatus: attachment.scanStatus,
+          createdAt: attachment.createdAt,
+          deletedAt: attachment.deletedAt,
+          extraction: attachment.extraction
+            ? {
+                status: attachment.extraction.status,
+                merchant: attachment.extraction.merchant,
+                expenseDate: attachment.extraction.expenseDate,
+                totalText: attachment.extraction.totalText,
+                currencyHint: attachment.extraction.currencyHint,
+                confidence: attachment.extraction.confidence,
+                errorCode: attachment.extraction.errorCode,
+              }
+            : null,
         })),
       })),
       settlements: settlements.map((settlement) => ({
@@ -348,6 +393,16 @@ export class UsersService {
           settledOn: revision.settledOn,
           note: revision.note,
           reversalReason: revision.reversalReason,
+          valuation: this.exportValuation(revision.exchangeRateSet),
+          allocations: revision.allocations.map((allocation) => ({
+            expenseId: allocation.expenseId,
+            pathSequence: allocation.pathSequence,
+            edgeSequence: allocation.edgeSequence,
+            debtorId: allocation.debtorId,
+            creditorId: allocation.creditorId,
+            amountMinor: allocation.amountMinor.toString(),
+            currency: allocation.currency,
+          })),
           createdAt: revision.createdAt,
           ledgerEntries: revision.ledgerEntries.map((entry) => ({
             sequence: entry.sequence,
@@ -387,6 +442,34 @@ export class UsersService {
         createdAt: event.createdAt,
       })),
     };
+  }
+
+  private exportValuation(
+    rateSet: {
+      baseCurrency: string;
+      status: string;
+      source: string;
+      effectiveDate: Date;
+      capturedAt: Date;
+      payloadHash: string | null;
+      quotes: Array<{
+        quoteCurrency: string;
+        numerator: string;
+        denominator: string;
+      }>;
+    } | null,
+  ) {
+    return rateSet
+      ? {
+          baseCurrency: rateSet.baseCurrency,
+          status: rateSet.status,
+          source: rateSet.source,
+          effectiveDate: rateSet.effectiveDate,
+          capturedAt: rateSet.capturedAt,
+          payloadHash: rateSet.payloadHash,
+          quotes: rateSet.quotes,
+        }
+      : null;
   }
 
   async deactivate(

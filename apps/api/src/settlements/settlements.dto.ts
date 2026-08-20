@@ -62,6 +62,11 @@ export class SettlementInputDto {
   @IsString()
   @Length(0, 2000)
   note?: string;
+
+  @ApiPropertyOptional({ type: String, format: "uuid" })
+  @IsOptional()
+  @IsUUID()
+  valuationId?: string;
 }
 
 export class ReverseSettlementDto {

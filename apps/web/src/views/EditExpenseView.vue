@@ -38,6 +38,9 @@ const initial = computed<ExpenseWriteInput | undefined>(() =>
         ...(expense.data.value.notes
           ? { notes: expense.data.value.notes }
           : {}),
+        ...(expense.data.value.category?.id
+          ? { categoryId: expense.data.value.category.id }
+          : {}),
         payers: expense.data.value.payers.map(({ userId, amountMinor }) => ({
           userId,
           amountMinor,

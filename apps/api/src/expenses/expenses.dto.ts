@@ -62,6 +62,23 @@ export class ExpenseInputDto {
   @IsUUID()
   friendshipId?: string;
 
+  @ApiPropertyOptional({ type: String, format: "uuid" })
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+
+  @ApiPropertyOptional({ type: [String], maxItems: 10 })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsUUID(undefined, { each: true })
+  attachmentIds?: string[];
+
+  @ApiPropertyOptional({ type: String, format: "uuid" })
+  @IsOptional()
+  @IsUUID()
+  valuationId?: string;
+
   @ApiProperty({ type: String, minLength: 1, maxLength: 200 })
   @IsString()
   @Length(1, 200)
@@ -144,6 +161,37 @@ export class ExpensePageQueryDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   dateTo?: string;
+  @ApiPropertyOptional({ type: String, maxLength: 100 })
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  q?: string;
+  @ApiPropertyOptional({ type: String, format: "uuid" })
+  @IsOptional()
+  @IsUUID()
+  categoryId?: string;
+  @ApiPropertyOptional({ type: String, format: "uuid" })
+  @IsOptional()
+  @IsUUID()
+  personId?: string;
+  @ApiPropertyOptional({ enum: ["OPEN", "PARTIALLY_SETTLED", "SETTLED"] })
+  @IsOptional()
+  @IsIn(["OPEN", "PARTIALLY_SETTLED", "SETTLED"])
+  settledState?: "OPEN" | "PARTIALLY_SETTLED" | "SETTLED";
+  @ApiPropertyOptional({
+    enum: [
+      "DATE_DESC",
+      "DATE_ASC",
+      "UPDATED_DESC",
+      "AMOUNT_DESC",
+      "AMOUNT_ASC",
+    ],
+    default: "UPDATED_DESC",
+  })
+  @IsOptional()
+  @IsIn(["DATE_DESC", "DATE_ASC", "UPDATED_DESC", "AMOUNT_DESC", "AMOUNT_ASC"])
+  sort?:
+    "DATE_DESC" | "DATE_ASC" | "UPDATED_DESC" | "AMOUNT_DESC" | "AMOUNT_ASC";
   @ApiPropertyOptional({ type: Number, minimum: 1, maximum: 50, default: 20 })
   @IsOptional()
   @Type(() => Number)

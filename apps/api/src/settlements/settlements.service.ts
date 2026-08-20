@@ -10,6 +10,7 @@ import { PrismaService } from "../database/prisma.service";
 import { isSupportedCurrencyCode } from "../currencies/currency-codes";
 import { ApiException } from "../http/api.exception";
 import { parseMinorUnits, simplifyDebts } from "../expenses/domain";
+import { CurrenciesService } from "../currencies/currencies.service";
 import type {
   SettlementCorrectionDto,
   SettlementInputDto,
@@ -28,6 +29,9 @@ const revisionInclude = {
   actor: { select: userSelect },
   fromUser: { select: userSelect },
   toUser: { select: userSelect },
+  exchangeRateSet: {
+    include: { quotes: { orderBy: { quoteCurrency: "asc" as const } } },
+  },
 } as const;
 const settlementInclude = {
   currentRevision: { include: revisionInclude },
@@ -40,6 +44,7 @@ export class SettlementsService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ActivitiesService) private readonly activities: ActivitiesService,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(CurrenciesService) private readonly currencies: CurrenciesService,
   ) {}
 
   async create(userId: string, key: string, input: SettlementInputDto) {
@@ -83,6 +88,13 @@ export class SettlementsService {
           where: { id: settlement.id },
           data: { currentRevisionId: revision.id },
         });
+        await this.allocateSettlement(
+          database,
+          revision.id,
+          context,
+          input,
+          amountMinor,
+        );
         await database.settlementIdempotency.create({
           data: {
             actorId: userId,
@@ -243,6 +255,7 @@ export class SettlementsService {
           settledOn: source.settledOn,
           note: source.note,
           reversalReason: reason.trim(),
+          exchangeRateSetId: source.exchangeRateSetId,
         },
       });
       const changed = await database.settlement.updateMany({
@@ -341,6 +354,7 @@ export class SettlementsService {
             settledOn: original.currentRevision.settledOn,
             note: original.currentRevision.note,
             reversalReason: input.reason.trim(),
+            exchangeRateSetId: original.currentRevision.exchangeRateSetId,
           },
         });
         const changed = await database.settlement.updateMany({
@@ -374,6 +388,13 @@ export class SettlementsService {
           where: { id: replacement.id },
           data: { currentRevisionId: revision.id },
         });
+        await this.allocateSettlement(
+          database,
+          revision.id,
+          context,
+          replacementInput,
+          requested,
+        );
         await database.settlementIdempotency.create({
           data: {
             actorId: userId,
@@ -462,6 +483,7 @@ export class SettlementsService {
             settledOn: source.settledOn,
             note: source.note,
             reversalReason: reason.trim(),
+            exchangeRateSetId: source.exchangeRateSetId,
           },
         });
         const changed = await database.settlement.updateMany({
@@ -698,7 +720,7 @@ export class SettlementsService {
     return net < 0n ? -net : 0n;
   }
 
-  private createActiveRevision(
+  private async createActiveRevision(
     database: Prisma.TransactionClient,
     settlementId: string,
     revision: number,
@@ -707,6 +729,13 @@ export class SettlementsService {
     amountMinor: bigint,
     action: "CREATED" | "REPLACED",
   ) {
+    const rates = await this.currencies.snapshotForWrite(
+      database,
+      actorId,
+      input.currency,
+      input.settledOn,
+      input.valuationId,
+    );
     return database.settlementRevision.create({
       data: {
         settlementId,
@@ -721,6 +750,7 @@ export class SettlementsService {
         methodLabel: input.methodLabel?.trim() || null,
         settledOn: new Date(`${input.settledOn}T00:00:00.000Z`),
         note: input.note?.trim() || null,
+        exchangeRateSetId: rates.id,
         ledgerEntries: {
           create: {
             sourceType: "SETTLEMENT_REVISION",
@@ -733,6 +763,156 @@ export class SettlementsService {
         },
       },
     });
+  }
+
+  private async allocateSettlement(
+    database: Prisma.TransactionClient,
+    settlementRevisionId: string,
+    context: { groupId: string | null; friendshipId: string | null },
+    input: SettlementInputDto,
+    amountMinor: bigint,
+  ): Promise<void> {
+    const expenses = await database.expense.findMany({
+      where: {
+        status: "ACTIVE",
+        ...(context.groupId
+          ? { groupId: context.groupId }
+          : { friendshipId: context.friendshipId }),
+        currentRevision: { currency: input.currency },
+      },
+      select: {
+        id: true,
+        createdAt: true,
+        currentRevision: {
+          select: {
+            expenseDate: true,
+            ledgerEntries: {
+              select: {
+                sequence: true,
+                debtorId: true,
+                creditorId: true,
+                amountMinor: true,
+              },
+              orderBy: { sequence: "asc" },
+            },
+          },
+        },
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    const existing = await database.settlementAllocation.groupBy({
+      by: ["expenseId", "debtorId", "creditorId"],
+      where: {
+        currency: input.currency,
+        expenseId: { in: expenses.map((row) => row.id) },
+        settlementRevision: { currentFor: { is: { status: "ACTIVE" } } },
+      },
+      _sum: { amountMinor: true },
+    });
+    const used = new Map(
+      existing.map((row) => [
+        `${row.expenseId}:${row.debtorId}:${row.creditorId}`,
+        row._sum.amountMinor ?? 0n,
+      ]),
+    );
+    const edges = expenses
+      .flatMap((expense) =>
+        (expense.currentRevision?.ledgerEntries ?? []).map((entry) => {
+          const already =
+            used.get(`${expense.id}:${entry.debtorId}:${entry.creditorId}`) ??
+            0n;
+          return {
+            expenseId: expense.id,
+            debtorId: entry.debtorId,
+            creditorId: entry.creditorId,
+            remaining:
+              entry.amountMinor > already ? entry.amountMinor - already : 0n,
+            expenseDate: expense.currentRevision!.expenseDate,
+            createdAt: expense.createdAt,
+            sequence: entry.sequence,
+          };
+        }),
+      )
+      .filter((edge) => edge.remaining > 0n)
+      .sort(
+        (a, b) =>
+          a.expenseDate.getTime() - b.expenseDate.getTime() ||
+          a.createdAt.getTime() - b.createdAt.getTime() ||
+          a.sequence - b.sequence ||
+          a.expenseId.localeCompare(b.expenseId),
+      );
+
+    let outstanding = amountMinor;
+    let pathSequence = 0;
+    const rows: Array<{
+      settlementRevisionId: string;
+      expenseId: string;
+      pathSequence: number;
+      edgeSequence: number;
+      debtorId: string;
+      creditorId: string;
+      currency: string;
+      amountMinor: bigint;
+    }> = [];
+    while (outstanding > 0n) {
+      const path = this.findAllocationPath(
+        edges,
+        input.fromUserId,
+        input.toUserId,
+      );
+      if (!path.length)
+        throw settlementError(
+          "SETTLEMENT_ALLOCATION_FAILED",
+          "The settlement could not be matched to auditable obligations",
+        );
+      const amount = path.reduce(
+        (value, edge) => (edge.remaining < value ? edge.remaining : value),
+        outstanding,
+      );
+      path.forEach((edge, edgeSequence) => {
+        edge.remaining -= amount;
+        rows.push({
+          settlementRevisionId,
+          expenseId: edge.expenseId,
+          pathSequence,
+          edgeSequence,
+          debtorId: edge.debtorId,
+          creditorId: edge.creditorId,
+          currency: input.currency,
+          amountMinor: amount,
+        });
+      });
+      outstanding -= amount;
+      pathSequence += 1;
+    }
+    await database.settlementAllocation.createMany({ data: rows });
+  }
+
+  private findAllocationPath<
+    T extends { debtorId: string; creditorId: string; remaining: bigint },
+  >(edges: T[], from: string, to: string): T[] {
+    const queue: Array<{ userId: string; path: T[] }> = [
+      { userId: from, path: [] },
+    ];
+    const visited = new Set([from]);
+    while (queue.length) {
+      const current = queue.shift()!;
+      for (const edge of edges) {
+        if (
+          edge.remaining <= 0n ||
+          edge.debtorId !== current.userId ||
+          current.path.includes(edge)
+        )
+          continue;
+        const path = [...current.path, edge];
+        if (edge.creditorId === to) return path;
+        if (!visited.has(edge.creditorId)) {
+          visited.add(edge.creditorId);
+          queue.push({ userId: edge.creditorId, path });
+        }
+      }
+    }
+    return [];
   }
 
   private async requireReadable(
@@ -822,6 +1002,19 @@ export class SettlementsService {
       replacementSettlementId: settlement.replacement?.id ?? null,
       createdAt: settlement.createdAt,
       updatedAt: settlement.updatedAt,
+      valuation: revision.exchangeRateSet
+        ? {
+            id: revision.exchangeRateSet.id,
+            baseCurrency: revision.exchangeRateSet.baseCurrency,
+            status: revision.exchangeRateSet.status,
+            source: revision.exchangeRateSet.source,
+            effectiveDate: revision.exchangeRateSet.effectiveDate
+              .toISOString()
+              .slice(0, 10),
+            capturedAt: revision.exchangeRateSet.capturedAt,
+            quotes: revision.exchangeRateSet.quotes,
+          }
+        : null,
       permissions: { canReverse: canMutate, canCorrect: canMutate },
     };
   }

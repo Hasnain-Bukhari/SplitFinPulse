@@ -12,6 +12,8 @@ import {
   UserRoundPlus,
   UsersRound,
   WalletCards,
+  ReceiptText,
+  Plus,
 } from "@lucide/vue";
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -24,13 +26,20 @@ import { Button } from "./ui/button";
 
 const navigation = [
   { label: "Overview", to: "/", icon: LayoutDashboard },
+  { label: "Expenses", to: "/expenses", icon: ReceiptText },
   { label: "Friends", to: "/friends", icon: UserRoundPlus },
   { label: "Balances", to: "/balances", icon: WalletCards },
   { label: "Groups", to: "/groups", icon: UsersRound },
   { label: "Activity", to: "/activity", icon: Activity },
   { label: "Settings", to: "/settings/profile", icon: Settings },
 ];
-const mobileNavigation = navigation.filter((item) => item.label !== "Settings");
+const mobileNavigation = [
+  { ...navigation[0]!, primary: false },
+  { ...navigation[1]!, primary: false },
+  { label: "Add", to: "/expenses/new", icon: Plus, primary: true },
+  { ...navigation[3]!, primary: false },
+  { label: "More", to: "/more", icon: Menu, primary: false },
+];
 
 const route = useRoute();
 const router = useRouter();
@@ -149,6 +158,7 @@ const logout = useMutation({
         :key="item.to"
         :to="item.to"
         class="mobile-nav-link"
+        :class="{ 'mobile-nav-link--primary': item.primary }"
         ><component :is="item.icon" :size="20" aria-hidden="true" /><span>{{
           item.label
         }}</span></RouterLink

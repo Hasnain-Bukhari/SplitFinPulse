@@ -27,6 +27,10 @@ export class BalanceBreakdownQueryDto {
   @IsOptional()
   @Matches(/^[A-Z]{3}$/)
   currency?: string;
+  @ApiPropertyOptional({ type: String, pattern: "^[A-Z]{3}$" })
+  @IsOptional()
+  @Matches(/^[A-Z]{3}$/)
+  reportingCurrency?: string;
   @ApiPropertyOptional({ type: String })
   @IsOptional()
   @IsString()
@@ -41,6 +45,10 @@ export class BalanceBreakdownQueryDto {
 }
 
 export class OverallBalanceQueryDto {
+  @ApiPropertyOptional({ type: String, pattern: "^[A-Z]{3}$" })
+  @IsOptional()
+  @Matches(/^[A-Z]{3}$/)
+  reportingCurrency?: string;
   @ApiPropertyOptional({ type: String })
   @IsOptional()
   @IsString()
@@ -52,4 +60,11 @@ export class OverallBalanceQueryDto {
   @Min(1)
   @Max(100)
   limit = 50;
+}
+
+export class ConversionQueryDto {
+  @ApiPropertyOptional({ type: String, pattern: "^[A-Z]{3}$" })
+  @IsOptional()
+  @Matches(/^[A-Z]{3}$/)
+  reportingCurrency?: string;
 }

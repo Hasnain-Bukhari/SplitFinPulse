@@ -3,5 +3,6 @@
     <RouterLink to="/settings/profile">Profile</RouterLink>
     <RouterLink to="/settings/security">Security</RouterLink>
     <RouterLink to="/settings/data">Account data</RouterLink>
+    <RouterLink to="/settings/categories">Categories</RouterLink>
   </nav>
 </template>

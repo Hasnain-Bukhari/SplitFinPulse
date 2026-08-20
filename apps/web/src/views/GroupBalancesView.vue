@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useQuery } from "@tanstack/vue-query";
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { Card } from "@/components/ui/card";
 import BalanceAmounts from "@/features/balances/BalanceAmounts.vue";
@@ -13,14 +13,27 @@ import { sessionQueryOptions } from "@/lib/query-client";
 const route = useRoute();
 const groupId = computed(() => String(route.params.groupId));
 const showOriginal = ref(false);
+const reportingCurrency = ref("");
 const { formatCurrency } = useCurrencyFormatter();
+const currencies = useQuery({
+  queryKey: ["profile", "options"],
+  queryFn: () => api.profileOptions(),
+});
+const session = useQuery(sessionQueryOptions);
+watch(
+  () => session.data.value?.user.defaultCurrency,
+  (value) => {
+    if (value && !reportingCurrency.value) reportingCurrency.value = value;
+  },
+  { immediate: true },
+);
 const balances = useQuery(
   computed(() => ({
-    queryKey: ["balances", "groups", groupId.value],
-    queryFn: () => api.groupBalances(groupId.value),
+    queryKey: ["balances", "groups", groupId.value, reportingCurrency.value],
+    queryFn: () =>
+      api.groupBalances(groupId.value, reportingCurrency.value || undefined),
   })),
 );
-const session = useQuery(sessionQueryOptions);
 const transfers = computed(() => {
   const data = balances.data.value;
   if (!data) return [];
@@ -32,9 +45,24 @@ const transfers = computed(() => {
 
 <template>
   <div class="mx-auto max-w-6xl space-y-4">
-    <div>
-      <p class="section-kicker">Group ledger</p>
-      <h1 class="text-2xl font-bold">Group balances</h1>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p class="section-kicker">Group ledger</p>
+        <h1 class="text-2xl font-bold">Group balances</h1>
+      </div>
+      <label class="text-sm"
+        >Reporting currency
+        <select v-model="reportingCurrency" class="ml-2">
+          <option value="">Native only</option>
+          <option
+            v-for="item in currencies.data.value?.currencies ?? []"
+            :key="item.code"
+            :value="item.code"
+          >
+            {{ item.code }} — {{ item.name }}
+          </option>
+        </select></label
+      >
     </div>
     <p
       v-if="balances.isPending.value"
@@ -53,6 +81,23 @@ const transfers = computed(() => {
         ><p class="section-kicker">Your position</p>
         <BalanceAmounts class="mt-3" :amounts="balances.data.value.currentUser"
       /></Card>
+      <Card v-if="balances.data.value.convertedSummary" class="p-5">
+        <p class="section-kicker">Converted view</p>
+        <strong class="tabular-nums text-lg">{{
+          formatCurrency(
+            balances.data.value.convertedSummary.netMinor,
+            balances.data.value.convertedSummary.reportingCurrency,
+          )
+        }}</strong>
+        <p class="text-muted-foreground mt-1 text-xs">
+          Write-time snapshots ·
+          {{
+            balances.data.value.convertedSummary.incomplete
+              ? "incomplete; native balances remain authoritative"
+              : "all entries converted"
+          }}
+        </p>
+      </Card>
       <div class="grid gap-4 lg:grid-cols-2">
         <Card class="p-5"
           ><p class="section-kicker">Members</p>

@@ -16,6 +16,7 @@ import {
   ApiError,
   type SettlementMethod,
   type SettlementWriteInput,
+  type Valuation,
 } from "@/lib/api/client";
 import { sessionQueryOptions } from "@/lib/query-client";
 
@@ -64,6 +65,19 @@ const form = reactive({
   reason: "",
 });
 const reviewed = ref(false);
+const valuation = ref<Valuation>();
+const manualRate = ref("");
+const valuationNotice = ref("");
+const reportingPreview = computed(() =>
+  valuation.value?.convertedPreviews?.find(
+    (item) => item.currency === session.data.value?.user.defaultCurrency,
+  ),
+);
+const reportingQuote = computed(() =>
+  valuation.value?.quotes.find(
+    (item) => item.quoteCurrency === session.data.value?.user.defaultCurrency,
+  ),
+);
 const localError = ref("");
 const errorSummary = ref<HTMLElement>();
 const idempotency = createIdempotencyKeyTracker();
@@ -230,7 +244,10 @@ watch(
     form.note,
     form.reason,
   ],
-  () => (reviewed.value = false),
+  () => {
+    reviewed.value = false;
+    valuation.value = undefined;
+  },
 );
 
 function buildInput(): SettlementWriteInput | undefined {
@@ -260,6 +277,7 @@ function buildInput(): SettlementWriteInput | undefined {
       : {}),
     settledOn: form.settledOn,
     ...(form.note.trim() ? { note: form.note.trim() } : {}),
+    ...(valuation.value ? { valuationId: valuation.value.valuationId } : {}),
   };
 }
 const save = useMutation({
@@ -282,6 +300,8 @@ const save = useMutation({
       queryClient.invalidateQueries({ queryKey: ["balances"] }),
       queryClient.invalidateQueries({ queryKey: ["settlements"] }),
       queryClient.invalidateQueries({ queryKey: ["activities"] }),
+      queryClient.invalidateQueries({ queryKey: ["expenses"] }),
+      queryClient.invalidateQueries({ queryKey: ["search"] }),
     ]);
     await router.push(`/settlements/${settlement.id}`);
   },
@@ -293,9 +313,53 @@ const save = useMutation({
     void nextTick(() => errorSummary.value?.focus());
   },
 });
-function review(): void {
-  if (buildInput()) reviewed.value = true;
-  else void nextTick(() => errorSummary.value?.focus());
+async function review(): Promise<void> {
+  const input = buildInput();
+  if (!input) {
+    void nextTick(() => errorSummary.value?.focus());
+    return;
+  }
+  try {
+    valuationNotice.value = "";
+    valuation.value = await api.valuation({
+      baseCurrency: input.currency,
+      effectiveDate: input.settledOn,
+      amountMinor: input.amountMinor,
+    });
+    reviewed.value = true;
+  } catch {
+    valuation.value = undefined;
+    valuationNotice.value =
+      "Conversion is unavailable; this payment can still be recorded in its native currency.";
+    reviewed.value = true;
+  }
+}
+async function applyManualRate(): Promise<void> {
+  const input = buildInput();
+  const quoteCurrency = session.data.value?.user.defaultCurrency;
+  if (!input || !quoteCurrency) return;
+  if (
+    !/^(?:0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(?:\.[0-9]{1,18})?)$/.test(
+      manualRate.value,
+    )
+  ) {
+    localError.value =
+      "Enter a positive rate with no more than 18 decimal places.";
+    return;
+  }
+  valuation.value = await api.valuation({
+    baseCurrency: input.currency,
+    effectiveDate: input.settledOn,
+    amountMinor: input.amountMinor,
+    quoteCurrencies: [quoteCurrency],
+    manualRates: [
+      {
+        quoteCurrency,
+        rateDecimal: manualRate.value,
+        sourceLabel: "User supplied",
+      },
+    ],
+  });
 }
 </script>
 
@@ -438,6 +502,54 @@ function review(): void {
           </div>
         </dl></Card
       >
+      <Card v-if="reviewed && valuation" class="p-5 text-sm">
+        <p class="font-semibold">Conversion snapshot</p>
+        <p class="text-muted-foreground mt-1">
+          {{ valuation.source }} · effective {{ valuation.effectiveDate }} ·
+          {{ valuation.status.toLowerCase() }}
+        </p>
+        <p v-if="reportingPreview" class="mt-1">
+          Reporting preview:
+          {{
+            formatCurrency(
+              reportingPreview.amountMinor,
+              reportingPreview.currency,
+            )
+          }}
+        </p>
+        <p v-if="reportingQuote" class="mt-1">
+          Exact rational rate: {{ reportingQuote.numerator }} /
+          {{ reportingQuote.denominator }} {{ reportingQuote.quoteCurrency }}
+        </p>
+        <div
+          v-if="
+            valuation.status === 'UNAVAILABLE' &&
+            session.data.value?.user.defaultCurrency !== selected?.currency
+          "
+          class="mt-3"
+        >
+          <label
+            >1 {{ selected?.currency }} equals
+            <input v-model="manualRate" inputmode="decimal" class="mx-2" />
+            {{ session.data.value?.user.defaultCurrency }}</label
+          >
+          <Button
+            type="button"
+            variant="outline"
+            class="mt-2"
+            @click="applyManualRate"
+          >
+            Apply manual rate
+          </Button>
+        </div>
+      </Card>
+      <p
+        v-if="reviewed && valuationNotice"
+        class="text-muted-foreground text-sm"
+        role="status"
+      >
+        {{ valuationNotice }}
+      </p>
       <p
         v-if="localError"
         ref="errorSummary"

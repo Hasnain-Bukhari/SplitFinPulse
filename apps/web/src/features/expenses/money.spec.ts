@@ -26,6 +26,14 @@ describe("money transport helpers", () => {
     expect(addMinor(["9007199254740993", "7"])).toBe("9007199254741000");
   });
 
+  it("formats arbitrary-size amounts with locale separators", async () => {
+    const { formatMinor } = await import("./money");
+    expect(formatMinor("900719925474099312345", "USD", 2, "en-US")).toBe(
+      "USD 9,007,199,254,740,993,123.45",
+    );
+    expect(formatMinor("1234", "KWD", 3, "de-DE")).toBe("KWD 1,234");
+  });
+
   it("uses ISO common minor units", () => {
     expect(currencyMinorUnit("JPY")).toBe(0);
     expect(currencyMinorUnit("KWD")).toBe(3);

@@ -190,6 +190,19 @@ export interface GroupInvitationPreview {
 }
 
 export type ExpenseStatus = "ACTIVE" | "DELETED";
+export type ExpenseSettlementState = "OPEN" | "PARTIALLY_SETTLED" | "SETTLED";
+export interface CategorySummary {
+  id: string;
+  kind: "SYSTEM" | "USER";
+  key: string;
+  name: string;
+  icon: string;
+  archived: boolean;
+  canManage: boolean;
+}
+export interface CategoryPage {
+  items: CategorySummary[];
+}
 export type ExpenseSplitMethod = "EQUAL" | "EXACT" | "PERCENTAGE" | "SHARES";
 export type ExpenseRevisionAction =
   "CREATED" | "UPDATED" | "DELETED" | "RESTORED";
@@ -228,6 +241,9 @@ export interface ExpenseWriteInput {
   payers: Array<{ userId: string; amountMinor: string }>;
   splitMethod: ExpenseSplitMethod;
   participants: Array<{ userId: string; input?: string }>;
+  categoryId?: string;
+  attachmentIds?: string[];
+  valuationId?: string;
 }
 
 export interface ExpensePreview {
@@ -250,6 +266,31 @@ export interface ExpenseSummary {
   version: number;
   createdAt: string;
   updatedAt: string;
+  category: { id: string | null; name: string; icon: string | null } | null;
+  settlement: {
+    state: ExpenseSettlementState;
+    allocatedMinor: string;
+    remainingMinor: string;
+    obligations?: Array<{
+      sequence: number;
+      debtorId: string;
+      creditorId: string;
+      originalMinor: string;
+      allocatedMinor: string;
+      remainingMinor: string;
+      currency: string;
+    }>;
+    resolvingSettlements?: Array<{
+      settlementId: string | null;
+      settledOn: string;
+      pathSequence: number;
+      edgeSequence: number;
+      debtorId: string;
+      creditorId: string;
+      amountMinor: string;
+      currency: string;
+    }>;
+  };
 }
 
 export interface ExpensePermissions {
@@ -266,6 +307,7 @@ export interface ExpenseDetail extends ExpenseSummary {
   splits: ExpenseSplitAllocation[];
   ledgerEntries: ExpenseLedgerEntry[];
   permissions: ExpensePermissions;
+  valuation: ValuationSnapshot | null;
 }
 
 export interface ExpensePage {
@@ -288,6 +330,22 @@ export interface ExpenseRevision {
   payers: ExpensePayerAllocation[];
   splits: ExpenseSplitAllocation[];
   ledgerEntries: ExpenseLedgerEntry[];
+  category: ExpenseSummary["category"];
+  valuation: ValuationSnapshot | null;
+}
+
+export interface ValuationSnapshot {
+  id: string;
+  status: string;
+  source: string;
+  baseCurrency: string;
+  effectiveDate: string;
+  capturedAt: string;
+  quotes: Array<{
+    quoteCurrency: string;
+    numerator: string;
+    denominator: string;
+  }>;
 }
 
 export interface ExpenseRevisionPage {
@@ -302,6 +360,23 @@ export interface BalanceAmount {
   netMinor: string;
 }
 
+export interface ConvertedSummary {
+  reportingCurrency: string;
+  youOweMinor: string;
+  youAreOwedMinor: string;
+  netMinor: string;
+  incomplete: boolean;
+  sources: Array<{
+    source: string;
+    effectiveDate: string;
+    capturedAt: string;
+    status: string;
+    manual: boolean;
+    stale: boolean;
+  }>;
+  warnings: string[];
+}
+
 export interface BalanceContextSummary {
   contextType: "GROUP" | "FRIENDSHIP";
   contextId: string;
@@ -313,6 +388,7 @@ export interface OverallBalances {
   totals: BalanceAmount[];
   contexts: BalanceContextSummary[];
   nextCursor: string | null;
+  convertedSummary?: ConvertedSummary;
 }
 
 export interface BalancePosition {
@@ -335,12 +411,14 @@ export interface GroupBalances {
   positions: BalancePosition[];
   rawObligations: BalanceTransfer[];
   recommendations: BalanceTransfer[];
+  convertedSummary?: ConvertedSummary;
 }
 
 export interface FriendBalances {
   friendshipId: string;
   friend: FriendUserSummary;
   amounts: BalanceAmount[];
+  convertedSummary?: ConvertedSummary;
 }
 
 interface BalanceBreakdownItemBase {
@@ -387,6 +465,7 @@ export interface SettlementWriteInput {
   methodLabel?: string;
   settledOn: string;
   note?: string;
+  valuationId?: string;
 }
 
 export interface SettlementPermissions {
@@ -414,6 +493,7 @@ export interface SettlementSummary {
   replacementSettlementId: string | null;
   createdAt: string;
   updatedAt: string;
+  valuation: ValuationSnapshot | null;
 }
 
 export interface SettlementDetail extends SettlementSummary {
@@ -519,6 +599,81 @@ export interface ExpenseListFilters {
   currency?: string;
   dateFrom?: string;
   dateTo?: string;
+  q?: string;
+  categoryId?: string;
+  personId?: string;
+  settledState?: ExpenseSettlementState;
+  sort?:
+    "DATE_DESC" | "DATE_ASC" | "UPDATED_DESC" | "AMOUNT_DESC" | "AMOUNT_ASC";
+}
+
+export interface SearchResults {
+  expenses: Array<{
+    type: "EXPENSE";
+    id: string;
+    description: string;
+    totalMinor: string;
+    currency: string;
+    expenseDate: string;
+    groupId: string | null;
+    friendshipId: string | null;
+  }>;
+  groups: Array<{
+    type: "GROUP";
+    id: string;
+    name: string;
+    groupType: GroupType;
+  }>;
+  people: Array<{
+    type: "PERSON";
+    id: string;
+    name: string;
+    avatarUrl: string | null;
+  }>;
+}
+
+export interface Valuation {
+  valuationId: string;
+  baseCurrency: string;
+  status: "AVAILABLE" | "MANUAL" | "UNAVAILABLE";
+  source: string;
+  effectiveDate: string;
+  capturedAt: string;
+  expiresAt: string | null;
+  quotes: Array<{
+    quoteCurrency: string;
+    numerator: string;
+    denominator: string;
+  }>;
+  convertedPreviews: Array<{ currency: string; amountMinor: string }>;
+}
+
+export interface AttachmentExtraction {
+  status:
+    "PENDING" | "RUNNING" | "SUCCEEDED" | "NO_DATA" | "FAILED" | "UNSUPPORTED";
+  merchant: string | null;
+  expenseDate: string | null;
+  totalText: string | null;
+  currencyHint: string | null;
+  confidence: string | null;
+  errorCode: string | null;
+}
+export interface ExpenseAttachment {
+  id: string;
+  expenseId: string | null;
+  originalName: string;
+  mime: string;
+  sizeBytes: number | null;
+  status: string;
+  scanStatus: string;
+  createdAt: string;
+  extraction?: AttachmentExtraction | null;
+}
+export interface UploadIntent {
+  attachmentId: string;
+  uploadUrl: string;
+  uploadToken: string;
+  expiresAt: string;
 }
 
 export interface BalanceBreakdownFilters {
@@ -527,6 +682,7 @@ export interface BalanceBreakdownFilters {
   friendshipId?: string;
   counterpartyId?: string;
   currency?: string;
+  reportingCurrency?: string;
 }
 
 export class ApiError extends Error {
@@ -620,6 +776,56 @@ async function download(path: string): Promise<Blob> {
   return response.blob();
 }
 
+async function uploadBinary(
+  intent: UploadIntent,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<ExpenseAttachment> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("PUT", `${apiBaseUrl}${intent.uploadUrl}`);
+    request.withCredentials = true;
+    request.setRequestHeader("Accept", "application/json");
+    request.setRequestHeader("Content-Type", "application/octet-stream");
+    request.setRequestHeader("Upload-Token", intent.uploadToken);
+    const csrf = csrfToken();
+    if (csrf) request.setRequestHeader("X-CSRF-Token", csrf);
+    request.upload.addEventListener("progress", (event) => {
+      if (event.lengthComputable) {
+        onProgress?.(Math.round((event.loaded / event.total) * 100));
+      }
+    });
+    request.addEventListener("load", () => {
+      let body: unknown;
+      try {
+        body = request.responseText ? JSON.parse(request.responseText) : null;
+      } catch {
+        body = null;
+      }
+      if (request.status >= 200 && request.status < 300) {
+        onProgress?.(100);
+        resolve(body as ExpenseAttachment);
+        return;
+      }
+      const error = body as ApiErrorBody | null;
+      reject(
+        new ApiError(
+          error?.message ?? "The receipt could not be uploaded",
+          request.status,
+          error?.code ?? "UPLOAD_FAILED",
+          error?.requestId,
+        ),
+      );
+    });
+    request.addEventListener("error", () => {
+      reject(
+        new ApiError("The receipt upload was interrupted", 0, "NETWORK_ERROR"),
+      );
+    });
+    request.send(file);
+  });
+}
+
 export const api = {
   health: (): Promise<HealthResponse> => request<HealthResponse>("/health"),
   session: (): Promise<SessionEnvelope> => request("/api/v1/auth/session"),
@@ -635,6 +841,75 @@ export const api = {
     request("/api/v1/auth/sessions/revoke-all", { method: "POST" }),
   profileOptions: (): Promise<PreferenceOptions> =>
     request("/api/v1/users/me/preference-options"),
+  categories: (includeArchived = false): Promise<CategoryPage> =>
+    request(
+      `/api/v1/categories${includeArchived ? "?includeArchived=true" : ""}`,
+    ),
+  createCategory: (input: {
+    name: string;
+    icon: string;
+  }): Promise<CategorySummary> =>
+    request("/api/v1/categories", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateCategory: (
+    id: string,
+    input: { name: string; icon: string },
+  ): Promise<CategorySummary> =>
+    request(`/api/v1/categories/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  archiveCategory: (id: string): Promise<CategorySummary> =>
+    request(`/api/v1/categories/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  valuation: (input: {
+    baseCurrency: string;
+    effectiveDate: string;
+    amountMinor?: string;
+    quoteCurrencies?: string[];
+    manualRates?: Array<{
+      quoteCurrency: string;
+      rateDecimal: string;
+      sourceLabel?: string;
+    }>;
+  }): Promise<Valuation> =>
+    request("/api/v1/currency-valuations", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  search: (q: string): Promise<SearchResults> =>
+    request(`/api/v1/search?q=${encodeURIComponent(q)}`),
+  createUploadIntent: (input: {
+    originalName: string;
+    declaredMime: string;
+    expenseId?: string;
+  }): Promise<UploadIntent> =>
+    request("/api/v1/attachment-upload-intents", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  uploadAttachment: uploadBinary,
+  attachments: (expenseId: string): Promise<{ items: ExpenseAttachment[] }> =>
+    request(`/api/v1/expenses/${encodeURIComponent(expenseId)}/attachments`),
+  attachmentExtraction: (id: string): Promise<AttachmentExtraction> =>
+    request(`/api/v1/attachments/${encodeURIComponent(id)}/extraction`),
+  retryAttachmentExtraction: (id: string): Promise<AttachmentExtraction> =>
+    request(`/api/v1/attachments/${encodeURIComponent(id)}/extraction/retry`, {
+      method: "POST",
+    }),
+  attachmentViewIntent: (
+    id: string,
+  ): Promise<{ url: string; expiresAt: string }> =>
+    request(`/api/v1/attachments/${encodeURIComponent(id)}/view-intents`, {
+      method: "POST",
+    }),
+  deleteAttachment: (id: string): Promise<ExpenseAttachment> =>
+    request(`/api/v1/attachments/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   updateProfile: (input: UpdateProfileInput): Promise<AuthenticatedUser> =>
     request("/api/v1/users/me", {
       method: "PATCH",
@@ -835,14 +1110,27 @@ export const api = {
       method: "POST",
       headers: { "If-Match": String(version) },
     }),
-  balances: (cursor?: string): Promise<OverallBalances> =>
+  balances: (
+    cursor?: string,
+    reportingCurrency?: string,
+  ): Promise<OverallBalances> =>
     request(
-      `/api/v1/balances${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+      `/api/v1/balances?${new URLSearchParams({ ...(cursor ? { cursor } : {}), ...(reportingCurrency ? { reportingCurrency } : {}) })}`,
     ),
-  groupBalances: (id: string): Promise<GroupBalances> =>
-    request(`/api/v1/balances/groups/${encodeURIComponent(id)}`),
-  friendBalances: (id: string): Promise<FriendBalances> =>
-    request(`/api/v1/balances/friends/${encodeURIComponent(id)}`),
+  groupBalances: (
+    id: string,
+    reportingCurrency?: string,
+  ): Promise<GroupBalances> =>
+    request(
+      `/api/v1/balances/groups/${encodeURIComponent(id)}${reportingCurrency ? `?reportingCurrency=${encodeURIComponent(reportingCurrency)}` : ""}`,
+    ),
+  friendBalances: (
+    id: string,
+    reportingCurrency?: string,
+  ): Promise<FriendBalances> =>
+    request(
+      `/api/v1/balances/friends/${encodeURIComponent(id)}${reportingCurrency ? `?reportingCurrency=${encodeURIComponent(reportingCurrency)}` : ""}`,
+    ),
   balanceBreakdown: (
     filters: BalanceBreakdownFilters = {},
   ): Promise<BalanceBreakdownPage> => {

@@ -45,8 +45,31 @@ export function formatMinor(
   value: string,
   currency: string,
   minorUnit = currencyMinorUnit(currency),
+  locale = "en-US",
 ): string {
-  return `${currency} ${minorToDecimal(value, minorUnit)}`;
+  const amount = BigInt(value);
+  const sign = amount < 0n ? "-" : "";
+  const absolute = amount < 0n ? -amount : amount;
+  const scale = 10n ** BigInt(minorUnit);
+  const integer = new Intl.NumberFormat(locale, {
+    useGrouping: true,
+    maximumFractionDigits: 0,
+  }).format(absolute / scale);
+  if (!minorUnit) return `${sign}${currency} ${integer}`;
+  const decimal =
+    new Intl.NumberFormat(locale, {
+      minimumFractionDigits: 1,
+    })
+      .formatToParts(1.1)
+      .find((part) => part.type === "decimal")?.value ?? ".";
+  const digits = Array.from({ length: 10 }, (_, digit) =>
+    new Intl.NumberFormat(locale, { useGrouping: false }).format(digit),
+  );
+  const fraction = (absolute % scale)
+    .toString()
+    .padStart(minorUnit, "0")
+    .replace(/\d/g, (digit) => digits[Number(digit)]!);
+  return `${sign}${currency} ${integer}${decimal}${fraction}`;
 }
 
 export function addMinor(values: string[]): string {

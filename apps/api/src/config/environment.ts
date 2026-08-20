@@ -24,6 +24,9 @@ export interface Environment {
   AUTH_REFRESH_TTL_SECONDS: number;
   AUTH_IDLE_TTL_SECONDS: number;
   FRIEND_INVITE_TTL_SECONDS: number;
+  ATTACHMENT_STORAGE_ROOT: string;
+  ATTACHMENT_UPLOAD_SECRET: string;
+  ATTACHMENT_MAX_BYTES: number;
 }
 
 function requiredString(config: Record<string, unknown>, key: string): string {
@@ -158,6 +161,21 @@ export function validateEnvironment(
       config,
       "FRIEND_INVITE_TTL_SECONDS",
       604_800,
+    ),
+    ATTACHMENT_STORAGE_ROOT:
+      typeof config.ATTACHMENT_STORAGE_ROOT === "string" &&
+      config.ATTACHMENT_STORAGE_ROOT.trim()
+        ? config.ATTACHMENT_STORAGE_ROOT.trim()
+        : "/tmp/splitfinpulse-attachments",
+    ATTACHMENT_UPLOAD_SECRET:
+      typeof config.ATTACHMENT_UPLOAD_SECRET === "string" &&
+      config.ATTACHMENT_UPLOAD_SECRET.trim()
+        ? secret(config, "ATTACHMENT_UPLOAD_SECRET")
+        : secret(config, "FRIEND_INVITE_SECRET"),
+    ATTACHMENT_MAX_BYTES: positiveInteger(
+      config,
+      "ATTACHMENT_MAX_BYTES",
+      10_485_760,
     ),
   };
 }

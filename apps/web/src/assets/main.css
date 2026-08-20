@@ -264,6 +264,19 @@ a {
   color: var(--primary);
 }
 
+.mobile-nav-link--primary {
+  margin-top: -0.8rem;
+  min-height: 3.7rem;
+  border: 1px solid color-mix(in srgb, var(--primary) 75%, white);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 0.45rem 1rem color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.mobile-nav-link--primary.router-link-active {
+  color: var(--primary-foreground);
+}
+
 .welcome-panel {
   position: relative;
   min-height: 21rem;

@@ -40,6 +40,12 @@ client. Register `http://localhost:3000/api/v1/auth/google/callback` as an
 authorized redirect URI. Replace all authentication and invitation secrets with
 different random values of at least 32 characters.
 
+Receipt files use the private local directory configured by
+`ATTACHMENT_STORAGE_ROOT`; it must remain outside the web application's public
+files. `ATTACHMENT_UPLOAD_SECRET` signs short-lived local upload/view intents.
+Image OCR runs locally with the packaged English Tesseract data. PDF receipts
+can be attached and viewed but are not OCR-processed.
+
 ## Local development
 
 Start PostgreSQL, apply migrations, and launch both applications:

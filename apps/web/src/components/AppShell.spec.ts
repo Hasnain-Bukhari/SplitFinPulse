@@ -31,9 +31,11 @@ describe("AppShell", () => {
       wrapper.get('nav[aria-label="Primary navigation"]').text(),
     ).toContain("Overview");
     const mobileNav = wrapper.get('nav[aria-label="Mobile navigation"]');
-    expect(mobileNav.text()).toContain("Groups");
+    expect(mobileNav.text()).toContain("Expenses");
+    expect(mobileNav.text()).toContain("Add");
+    expect(mobileNav.text()).toContain("More");
     expect(mobileNav.findAll("a")).toHaveLength(5);
-    expect(mobileNav.text()).toContain("Activity");
+    expect(mobileNav.text()).not.toContain("Activity");
     expect(mobileNav.text()).not.toContain("Settings");
     expect(wrapper.get("main").attributes("id")).toBe("main-content");
   });

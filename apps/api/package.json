@@ -26,6 +26,7 @@
     "@nestjs/throttler": "^6.4.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
+    "@tesseract.js-data/eng": "^1.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "cookie-parser": "^1.4.7",
@@ -33,14 +34,15 @@
     "helmet": "^8.1.0",
     "pg": "^8.16.3",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.10",
     "@nestjs/schematics": "^11.0.7",
     "@nestjs/testing": "^11.1.29",
-    "@types/express": "^5.0.3",
     "@types/cookie-parser": "^1.4.9",
+    "@types/express": "^5.0.3",
     "@types/node": "^22.17.2",
     "@types/pg": "^8.15.5",
     "@types/supertest": "^6.0.3",

@@ -18,6 +18,7 @@ import {
   BalanceBreakdownQueryDto,
   OverallBalanceQueryDto,
 } from "./balances.dto";
+import type { ConversionQueryDto } from "./balances.dto";
 import { BalancesService } from "./balances.service";
 import {
   BalanceBreakdownPageResponseDto,
@@ -49,23 +50,30 @@ export class BalancesController {
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
     @Query() query: OverallBalanceQueryDto,
   ) {
-    return this.balances.overall(principal.userId, query.cursor, query.limit);
+    return this.balances.overall(
+      principal.userId,
+      query.cursor,
+      query.limit,
+      query.reportingCurrency,
+    );
   }
   @Get("groups/:groupId")
   @ApiOkResponse({ type: GroupBalancesResponseDto })
   group(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
     @Param("groupId", ParseUUIDPipe) id: string,
+    @Query() query: ConversionQueryDto,
   ) {
-    return this.balances.group(principal.userId, id);
+    return this.balances.group(principal.userId, id, query.reportingCurrency);
   }
   @Get("friends/:friendshipId")
   @ApiOkResponse({ type: FriendBalancesResponseDto })
   friend(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
     @Param("friendshipId", ParseUUIDPipe) id: string,
+    @Query() query: ConversionQueryDto,
   ) {
-    return this.balances.friend(principal.userId, id);
+    return this.balances.friend(principal.userId, id, query.reportingCurrency);
   }
   @Get("breakdown")
   @ApiOkResponse({ type: BalanceBreakdownPageResponseDto })

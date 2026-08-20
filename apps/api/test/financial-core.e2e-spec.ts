@@ -35,6 +35,7 @@ describe("financial core", () => {
   let second: TestSession;
   let friendshipId: string;
   let groupId: string | undefined;
+  let categoryId: string | undefined;
 
   beforeAll(async () => {
     const module = await Test.createTestingModule({ imports: [AppModule] })
@@ -106,6 +107,9 @@ describe("financial core", () => {
         await prisma.ledgerEntry.deleteMany({
           where: { settlementRevisionId: { in: revisionIds } },
         });
+        await prisma.settlementAllocation.deleteMany({
+          where: { settlementRevisionId: { in: revisionIds } },
+        });
         await prisma.settlementRevision.deleteMany({
           where: { id: { in: revisionIds } },
         });
@@ -132,6 +136,20 @@ describe("financial core", () => {
         const expenseIds = expenses.map((row) => row.id);
         await prisma.expenseComment.deleteMany({
           where: { expenseId: { in: expenseIds } },
+        });
+        const attachments = await prisma.attachment.findMany({
+          where: { expenseId: { in: expenseIds } },
+          select: { id: true },
+        });
+        const attachmentIds = attachments.map((row) => row.id);
+        await prisma.receiptExtraction.deleteMany({
+          where: { attachmentId: { in: attachmentIds } },
+        });
+        await prisma.attachmentUploadIntent.deleteMany({
+          where: { attachmentId: { in: attachmentIds } },
+        });
+        await prisma.attachment.deleteMany({
+          where: { id: { in: attachmentIds } },
         });
         const revisions = await prisma.expenseRevision.findMany({
           where: { expenseId: { in: expenseIds } },
@@ -162,6 +180,9 @@ describe("financial core", () => {
           'ALTER TABLE "LedgerEntry" ENABLE TRIGGER USER; ALTER TABLE "ExpenseSplit" ENABLE TRIGGER USER; ALTER TABLE "ExpensePayer" ENABLE TRIGGER USER; ALTER TABLE "ExpenseRevision" ENABLE TRIGGER USER; ALTER TABLE "Expense" ENABLE TRIGGER USER',
         );
       }
+      if (categoryId) {
+        await prisma.category.delete({ where: { id: categoryId } });
+      }
       if (groupId) {
         await prisma.groupInvitation.deleteMany({ where: { groupId } });
         await prisma.groupMember.deleteMany({ where: { groupId } });
@@ -174,12 +195,22 @@ describe("financial core", () => {
       await prisma.authIdentity.deleteMany({
         where: { userId: { in: userIds } },
       });
+      await prisma.exchangeRateQuote.deleteMany({
+        where: { rateSet: { createdById: { in: userIds } } },
+      });
+      await prisma.exchangeRateSet.deleteMany({
+        where: { createdById: { in: userIds } },
+      });
       await prisma.user.deleteMany({ where: { id: { in: userIds } } });
     }
     await application.close();
   });
 
   it("creates an idempotent multi-payer expense and projects delete/restore balances", async () => {
+    const category = await authenticated(first, "post", "/api/v1/categories")
+      .send({ name: "Team meals", icon: "utensils" })
+      .expect(201);
+    categoryId = category.body.id as string;
     const input = {
       friendshipId,
       description: "Dinner",
@@ -192,6 +223,7 @@ describe("financial core", () => {
         { userId: second.userId, amountMinor: "40" },
       ],
       participants: [{ userId: first.userId }, { userId: second.userId }],
+      categoryId,
     };
     const created = await authenticated(first, "post", "/api/v1/expenses")
       .set("Idempotency-Key", "dinner-create")
@@ -306,6 +338,35 @@ describe("financial core", () => {
     expect(concurrentRestore.map((response) => response.status).sort()).toEqual(
       [200, 412],
     );
+
+    await authenticated(
+      first,
+      "delete",
+      `/api/v1/categories/${categoryId}`,
+    ).expect(200);
+    const historical = await authenticated(
+      second,
+      "get",
+      `/api/v1/expenses/${created.body.id as string}`,
+    ).expect(200);
+    expect(historical.body.category).toMatchObject({
+      id: categoryId,
+      name: "Team meals",
+    });
+    const filtered = await authenticated(
+      second,
+      "get",
+      `/api/v1/expenses?q=Concurrent&categoryId=${categoryId}`,
+    ).expect(200);
+    expect(filtered.body.items).toHaveLength(1);
+    const search = await authenticated(
+      second,
+      "get",
+      "/api/v1/search?q=Concurrent",
+    ).expect(200);
+    expect(search.body.expenses).toContainEqual(
+      expect.objectContaining({ id: created.body.id }),
+    );
   });
 
   it("rejects missing and arbitrary current ledger output in PostgreSQL", async () => {
@@ -361,6 +422,83 @@ describe("financial core", () => {
         });
       }),
     ).rejects.toThrow();
+  });
+
+  it("keeps receipt uploads private, validates content, and rejects replay", async () => {
+    const expense = await prisma.expense.findFirstOrThrow({
+      where: { creatorId: first.userId, status: "ACTIVE" },
+    });
+    const spoofed = await authenticated(
+      first,
+      "post",
+      "/api/v1/attachment-upload-intents",
+    )
+      .send({
+        originalName: "receipt.jpg",
+        declaredMime: "image/jpeg",
+        expenseId: expense.id,
+      })
+      .expect(201);
+    await authenticated(
+      first,
+      "put",
+      `/api/v1/attachment-uploads/${spoofed.body.attachmentId as string}`,
+    )
+      .set("Upload-Token", spoofed.body.uploadToken as string)
+      .set("Content-Type", "application/octet-stream")
+      .send(Buffer.from("not an image"))
+      .expect(400);
+
+    const intent = await authenticated(
+      first,
+      "post",
+      "/api/v1/attachment-upload-intents",
+    )
+      .send({
+        originalName: "private.png",
+        declaredMime: "image/png",
+        expenseId: expense.id,
+      })
+      .expect(201);
+    const image = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      "base64",
+    );
+    const uploaded = await authenticated(
+      first,
+      "put",
+      `/api/v1/attachment-uploads/${intent.body.attachmentId as string}`,
+    )
+      .set("Upload-Token", intent.body.uploadToken as string)
+      .set("Content-Type", "application/octet-stream")
+      .send(image)
+      .expect(200);
+    expect(uploaded.body).toMatchObject({
+      status: "AVAILABLE",
+      scanStatus: "NOT_CONFIGURED",
+    });
+    await authenticated(
+      first,
+      "put",
+      `/api/v1/attachment-uploads/${intent.body.attachmentId as string}`,
+    )
+      .set("Upload-Token", intent.body.uploadToken as string)
+      .set("Content-Type", "application/octet-stream")
+      .send(image)
+      .expect(400);
+    const list = await authenticated(
+      second,
+      "get",
+      `/api/v1/expenses/${expense.id}/attachments`,
+    ).expect(200);
+    expect(list.body.items).toContainEqual(
+      expect.objectContaining({ id: intent.body.attachmentId }),
+    );
+    await authenticated(
+      first,
+      "delete",
+      `/api/v1/attachments/${intent.body.attachmentId as string}`,
+    ).expect(200);
   });
 
   it("aggregates totals in PostgreSQL while paging contexts", async () => {
@@ -447,6 +585,16 @@ describe("financial core", () => {
       status: "ACTIVE",
       version: 1,
     });
+    const partiallySettled = await authenticated(
+      second,
+      "get",
+      "/api/v1/expenses?settledState=PARTIALLY_SETTLED",
+    ).expect(200);
+    expect(partiallySettled.body.items).toContainEqual(
+      expect.objectContaining({
+        settlement: expect.objectContaining({ state: "PARTIALLY_SETTLED" }),
+      }),
+    );
     const replay = await authenticated(second, "post", "/api/v1/settlements")
       .set("Idempotency-Key", "partial-settlement")
       .send(input)
@@ -496,6 +644,16 @@ describe("financial core", () => {
         (item: { currency: string }) => item.currency === "USD",
       ).netMinor,
     ).toBe("-10");
+    const reopened = await authenticated(
+      second,
+      "get",
+      "/api/v1/expenses?settledState=OPEN",
+    ).expect(200);
+    expect(reopened.body.items).toContainEqual(
+      expect.objectContaining({
+        settlement: expect.objectContaining({ state: "OPEN" }),
+      }),
+    );
 
     const incorrect = await authenticated(second, "post", "/api/v1/settlements")
       .set("Idempotency-Key", "incorrect-settlement")
@@ -675,6 +833,46 @@ describe("financial core", () => {
   });
 
   it("validates every split mode, malformed cursors, and publishes financial paths", async () => {
+    const currencies = await authenticated(
+      first,
+      "get",
+      "/api/v1/currencies",
+    ).expect(200);
+    expect(currencies.body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: "JPY", minorUnit: 0 }),
+        expect.objectContaining({ code: "USD", minorUnit: 2 }),
+        expect.objectContaining({ code: "KWD", minorUnit: 3 }),
+      ]),
+    );
+    const manualValuation = await authenticated(
+      first,
+      "post",
+      "/api/v1/currency-valuations",
+    )
+      .send({
+        baseCurrency: "USD",
+        effectiveDate: "2026-08-17",
+        amountMinor: "1000",
+        quoteCurrencies: ["KWD"],
+        manualRates: [{ quoteCurrency: "KWD", rateDecimal: "0.306" }],
+      })
+      .expect(201);
+    expect(manualValuation.body).toMatchObject({
+      status: "MANUAL",
+      source: "MANUAL",
+    });
+    expect(manualValuation.body.quotes).toContainEqual(
+      expect.objectContaining({
+        quoteCurrency: "KWD",
+        numerator: "153",
+        denominator: "500",
+      }),
+    );
+    expect(manualValuation.body.convertedPreviews).toContainEqual({
+      currency: "KWD",
+      amountMinor: "3060",
+    });
     const base = {
       friendshipId,
       description: "Preview",
@@ -755,6 +953,13 @@ describe("financial core", () => {
     );
     expect(openapi.body.paths).toHaveProperty("/api/v1/settlements");
     expect(openapi.body.paths).toHaveProperty("/api/v1/activities");
+    expect(openapi.body.paths).toHaveProperty("/api/v1/categories");
+    expect(openapi.body.paths).toHaveProperty("/api/v1/search");
+    expect(openapi.body.paths).toHaveProperty("/api/v1/currencies");
+    expect(openapi.body.paths).toHaveProperty("/api/v1/currency-valuations");
+    expect(openapi.body.paths).toHaveProperty(
+      "/api/v1/attachment-upload-intents",
+    );
     expect(openapi.body.paths).toHaveProperty(
       "/api/v1/groups/{groupId}/activities",
     );
@@ -813,7 +1018,7 @@ describe("financial core", () => {
 
   function authenticated(
     session: TestSession,
-    method: "get" | "post" | "patch" | "delete",
+    method: "get" | "post" | "put" | "patch" | "delete",
     path: string,
   ) {
     return request(application.getHttpServer())

@@ -42,6 +42,8 @@ const reverse = useMutation({
       queryClient.invalidateQueries({ queryKey: ["settlements"] }),
       queryClient.invalidateQueries({ queryKey: ["balances"] }),
       queryClient.invalidateQueries({ queryKey: ["activities"] }),
+      queryClient.invalidateQueries({ queryKey: ["expenses"] }),
+      queryClient.invalidateQueries({ queryKey: ["search"] }),
     ]);
   },
   onError: (error) => {
@@ -106,6 +108,14 @@ const reverse = useMutation({
           <div v-if="detail.data.value.reversalReason" class="sm:col-span-2">
             <dt class="text-muted-foreground">Reversal reason</dt>
             <dd>{{ detail.data.value.reversalReason }}</dd>
+          </div>
+          <div v-if="detail.data.value.valuation" class="sm:col-span-2">
+            <dt class="text-muted-foreground">Conversion snapshot</dt>
+            <dd>
+              {{ detail.data.value.valuation.source }} · effective
+              {{ detail.data.value.valuation.effectiveDate }} ·
+              {{ detail.data.value.valuation.status.toLowerCase() }}
+            </dd>
           </div>
         </dl>
         <div
@@ -189,6 +199,10 @@ const reverse = useMutation({
                   : "Recorded"
             }}</strong>
             by {{ item.actor.name }} · {{ item.updatedAt }}
+            <span v-if="item.valuation" class="text-muted-foreground block">
+              FX: {{ item.valuation.source }} ·
+              {{ item.valuation.effectiveDate }}
+            </span>
           </li>
         </ul>
       </Card>

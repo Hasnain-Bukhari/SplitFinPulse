@@ -9,6 +9,22 @@ type RevisionLike = {
   expenseDate: Date;
   notes: string | null;
   splitMethod: string;
+  categoryId: string | null;
+  categoryName: string | null;
+  categoryIcon: string | null;
+  exchangeRateSet: {
+    id: string;
+    status: string;
+    source: string;
+    baseCurrency: string;
+    effectiveDate: Date;
+    capturedAt: Date;
+    quotes: Array<{
+      quoteCurrency: string;
+      numerator: string;
+      denominator: string;
+    }>;
+  } | null;
   createdAt: Date;
   actor: { id: string; name: string; avatarUrl: string | null };
   payers: Array<{
@@ -44,6 +60,22 @@ export const presentRevision = (row: RevisionLike) => ({
   expenseDate: row.expenseDate.toISOString().slice(0, 10),
   notes: row.notes,
   splitMethod: row.splitMethod,
+  category: row.categoryName
+    ? { id: row.categoryId, name: row.categoryName, icon: row.categoryIcon }
+    : null,
+  valuation: row.exchangeRateSet
+    ? {
+        id: row.exchangeRateSet.id,
+        status: row.exchangeRateSet.status,
+        source: row.exchangeRateSet.source,
+        baseCurrency: row.exchangeRateSet.baseCurrency,
+        effectiveDate: row.exchangeRateSet.effectiveDate
+          .toISOString()
+          .slice(0, 10),
+        capturedAt: row.exchangeRateSet.capturedAt,
+        quotes: row.exchangeRateSet.quotes,
+      }
+    : null,
   createdAt: row.createdAt,
   payers: row.payers.map((item) => ({
     userId: item.userId,
@@ -68,6 +100,9 @@ export const presentRevision = (row: RevisionLike) => ({
 });
 
 export const revisionInclude = {
+  exchangeRateSet: {
+    include: { quotes: { orderBy: { quoteCurrency: "asc" as const } } },
+  },
   actor: { select: { id: true, name: true, avatarUrl: true } },
   payers: {
     include: { user: { select: { id: true, name: true, avatarUrl: true } } },

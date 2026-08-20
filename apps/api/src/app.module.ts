@@ -21,6 +21,10 @@ import { ActivitiesModule } from "./activities/activities.module";
 import { AuditModule } from "./audit/audit.module";
 import { CommentsModule } from "./comments/comments.module";
 import { SettlementsModule } from "./settlements/settlements.module";
+import { CategoriesModule } from "./categories/categories.module";
+import { SearchModule } from "./search/search.module";
+import { CurrenciesModule } from "./currencies/currencies.module";
+import { AttachmentsModule } from "./attachments/attachments.module";
 
 @Module({
   imports: [
@@ -42,6 +46,10 @@ import { SettlementsModule } from "./settlements/settlements.module";
     ActivitiesModule,
     CommentsModule,
     SettlementsModule,
+    CategoriesModule,
+    SearchModule,
+    CurrenciesModule,
+    AttachmentsModule,
     AuditModule,
   ],
 })

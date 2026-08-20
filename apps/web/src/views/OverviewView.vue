@@ -14,11 +14,17 @@ import { computed } from "vue";
 import { api } from "@/lib/api/client";
 import { useCurrencyFormatter } from "@/features/expenses/useCurrencyFormatter";
 import ActivityFeed from "@/features/activity/ActivityFeed.vue";
+import { sessionQueryOptions } from "@/lib/query-client";
 
-const balances = useQuery({
-  queryKey: ["balances", "overall"],
-  queryFn: () => api.balances(),
-});
+const session = useQuery(sessionQueryOptions);
+const balances = useQuery(
+  computed(() => ({
+    queryKey: ["balances", "overall", session.data.value?.user.defaultCurrency],
+    queryFn: () =>
+      api.balances(undefined, session.data.value?.user.defaultCurrency),
+    enabled: Boolean(session.data.value),
+  })),
+);
 const { formatCurrency } = useCurrencyFormatter();
 const summaryCards = computed(() => {
   const totals = balances.data.value?.totals ?? [];
@@ -127,6 +133,38 @@ const summaryCards = computed(() => {
           <span>{{ item.helper }}</span>
         </Card>
       </div>
+      <Card v-if="balances.data.value?.convertedSummary" class="mt-3 p-4">
+        <p class="section-kicker">Converted summary</p>
+        <strong class="tabular-nums text-lg">{{
+          formatCurrency(
+            balances.data.value.convertedSummary.netMinor,
+            balances.data.value.convertedSummary.reportingCurrency,
+          )
+        }}</strong>
+        <p class="text-muted-foreground mt-1 text-xs">
+          Write-time rate snapshots ·
+          {{
+            balances.data.value.convertedSummary.incomplete
+              ? "incomplete; native balances remain authoritative"
+              : "all entries converted"
+          }}
+        </p>
+        <p
+          v-if="balances.data.value.convertedSummary.sources[0]"
+          class="text-muted-foreground mt-1 text-xs"
+        >
+          {{ balances.data.value.convertedSummary.sources[0].source }} ·
+          effective
+          {{ balances.data.value.convertedSummary.sources[0].effectiveDate }} ·
+          captured
+          {{ balances.data.value.convertedSummary.sources[0].capturedAt }}
+          <template
+            v-if="balances.data.value.convertedSummary.sources[0].manual"
+          >
+            · manual</template
+          >
+        </p>
+      </Card>
     </section>
 
     <div class="grid gap-4 lg:grid-cols-[1.35fr_0.65fr]">

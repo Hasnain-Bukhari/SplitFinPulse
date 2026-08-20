@@ -24,6 +24,8 @@ import FriendBalanceView from "@/views/FriendBalanceView.vue";
 import ActivityView from "@/views/ActivityView.vue";
 import SettleUpView from "@/views/SettleUpView.vue";
 import SettlementDetailView from "@/views/SettlementDetailView.vue";
+import ExpensesView from "@/views/ExpensesView.vue";
+import CategorySettingsView from "@/views/CategorySettingsView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -60,6 +62,18 @@ export const router = createRouter({
       meta: { requiresAuth: true },
       children: [
         { path: "", name: "overview", component: OverviewView },
+        {
+          path: "expenses",
+          name: "expenses",
+          component: ExpensesView,
+          meta: { title: "Expenses" },
+        },
+        {
+          path: "more",
+          name: "more",
+          component: () => import("@/views/MoreView.vue"),
+          meta: { title: "More" },
+        },
         {
           path: "expenses/new",
           name: "create-expense",
@@ -174,6 +188,12 @@ export const router = createRouter({
           name: "data",
           component: DataSettingsView,
           meta: { title: "Account data" },
+        },
+        {
+          path: "settings/categories",
+          name: "category-settings",
+          component: CategorySettingsView,
+          meta: { title: "Categories" },
         },
       ],
     },

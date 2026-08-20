@@ -39,6 +39,42 @@ export class LedgerEntryResponseDto {
   @ApiProperty({ type: String, example: "USD" }) currency!: string;
 }
 
+export class CategorySnapshotResponseDto {
+  @ApiPropertyOptional({ type: String, format: "uuid", nullable: true })
+  id!: string | null;
+  @ApiProperty({ type: String }) name!: string;
+  @ApiPropertyOptional({ type: String, nullable: true }) icon!: string | null;
+}
+
+export class ExpenseSettlementResponseDto {
+  @ApiProperty({ enum: ["OPEN", "PARTIALLY_SETTLED", "SETTLED"] })
+  state!: "OPEN" | "PARTIALLY_SETTLED" | "SETTLED";
+  @ApiProperty({ type: String }) allocatedMinor!: string;
+  @ApiProperty({ type: String }) remainingMinor!: string;
+  @ApiPropertyOptional({ type: "array", items: { type: "object" } })
+  obligations?: Array<Record<string, unknown>>;
+  @ApiPropertyOptional({ type: "array", items: { type: "object" } })
+  resolvingSettlements?: Array<Record<string, unknown>>;
+}
+
+export class ExchangeRateQuoteResponseDto {
+  @ApiProperty({ type: String }) quoteCurrency!: string;
+  @ApiProperty({ type: String }) numerator!: string;
+  @ApiProperty({ type: String }) denominator!: string;
+}
+
+export class ValuationSnapshotResponseDto {
+  @ApiProperty({ type: String, format: "uuid" }) id!: string;
+  @ApiProperty({ type: String }) baseCurrency!: string;
+  @ApiProperty({ enum: ["AVAILABLE", "MANUAL", "UNAVAILABLE"] })
+  status!: "AVAILABLE" | "MANUAL" | "UNAVAILABLE";
+  @ApiProperty({ type: String }) source!: string;
+  @ApiProperty({ type: String, format: "date" }) effectiveDate!: string;
+  @ApiProperty({ type: String, format: "date-time" }) capturedAt!: Date;
+  @ApiProperty({ type: [ExchangeRateQuoteResponseDto] })
+  quotes!: ExchangeRateQuoteResponseDto[];
+}
+
 export class ExpensePreviewResponseDto {
   @ApiProperty({ type: String, example: "2500" }) totalMinor!: string;
   @ApiProperty({ type: String, example: "USD" }) currency!: string;
@@ -64,6 +100,13 @@ export class ExpenseSummaryResponseDto {
   @ApiProperty({ type: Number }) version!: number;
   @ApiProperty({ type: String, format: "date-time" }) createdAt!: Date;
   @ApiProperty({ type: String, format: "date-time" }) updatedAt!: Date;
+  @ApiPropertyOptional({
+    type: () => CategorySnapshotResponseDto,
+    nullable: true,
+  })
+  category!: CategorySnapshotResponseDto | null;
+  @ApiProperty({ type: () => ExpenseSettlementResponseDto })
+  settlement!: ExpenseSettlementResponseDto;
 }
 
 export class ExpensePermissionsResponseDto {
@@ -84,6 +127,11 @@ export class ExpenseDetailResponseDto extends ExpenseSummaryResponseDto {
   ledgerEntries!: LedgerEntryResponseDto[];
   @ApiProperty({ type: ExpensePermissionsResponseDto })
   permissions!: ExpensePermissionsResponseDto;
+  @ApiPropertyOptional({
+    type: () => ValuationSnapshotResponseDto,
+    nullable: true,
+  })
+  valuation!: ValuationSnapshotResponseDto | null;
 }
 
 export class ExpenseRevisionResponseDto {
@@ -104,6 +152,16 @@ export class ExpenseRevisionResponseDto {
   splits!: SplitAllocationResponseDto[];
   @ApiProperty({ type: [LedgerEntryResponseDto] })
   ledgerEntries!: LedgerEntryResponseDto[];
+  @ApiPropertyOptional({
+    type: () => CategorySnapshotResponseDto,
+    nullable: true,
+  })
+  category!: CategorySnapshotResponseDto | null;
+  @ApiPropertyOptional({
+    type: () => ValuationSnapshotResponseDto,
+    nullable: true,
+  })
+  valuation!: ValuationSnapshotResponseDto | null;
 }
 
 export class ExpensePageResponseDto {
@@ -136,6 +194,26 @@ export class BalanceContextResponseDto {
   amounts!: BalanceAmountResponseDto[];
 }
 
+export class ConvertedRateSourceResponseDto {
+  @ApiProperty({ type: String }) source!: string;
+  @ApiProperty({ type: String, format: "date" }) effectiveDate!: string;
+  @ApiProperty({ type: String, format: "date-time" }) capturedAt!: Date;
+  @ApiProperty({ type: String }) status!: string;
+  @ApiProperty({ type: Boolean }) manual!: boolean;
+  @ApiProperty({ type: Boolean }) stale!: boolean;
+}
+
+export class ConvertedSummaryResponseDto {
+  @ApiProperty({ type: String }) reportingCurrency!: string;
+  @ApiProperty({ type: String }) youOweMinor!: string;
+  @ApiProperty({ type: String }) youAreOwedMinor!: string;
+  @ApiProperty({ type: String }) netMinor!: string;
+  @ApiProperty({ type: Boolean }) incomplete!: boolean;
+  @ApiProperty({ type: [ConvertedRateSourceResponseDto] })
+  sources!: ConvertedRateSourceResponseDto[];
+  @ApiProperty({ type: [String] }) warnings!: string[];
+}
+
 export class OverallBalancesResponseDto {
   @ApiProperty({ type: [BalanceAmountResponseDto] })
   totals!: BalanceAmountResponseDto[];
@@ -143,6 +221,8 @@ export class OverallBalancesResponseDto {
   contexts!: BalanceContextResponseDto[];
   @ApiPropertyOptional({ type: String, nullable: true }) nextCursor!:
     string | null;
+  @ApiPropertyOptional({ type: () => ConvertedSummaryResponseDto })
+  convertedSummary?: ConvertedSummaryResponseDto;
 }
 
 export class BalancePositionResponseDto {
@@ -169,6 +249,8 @@ export class GroupBalancesResponseDto {
   rawObligations!: BalanceTransferResponseDto[];
   @ApiProperty({ type: [BalanceTransferResponseDto] })
   recommendations!: BalanceTransferResponseDto[];
+  @ApiPropertyOptional({ type: () => ConvertedSummaryResponseDto })
+  convertedSummary?: ConvertedSummaryResponseDto;
 }
 
 export class FriendBalancesResponseDto {
@@ -176,6 +258,8 @@ export class FriendBalancesResponseDto {
   @ApiProperty({ type: FinancialUserDto }) friend!: FinancialUserDto;
   @ApiProperty({ type: [BalanceAmountResponseDto] })
   amounts!: BalanceAmountResponseDto[];
+  @ApiPropertyOptional({ type: () => ConvertedSummaryResponseDto })
+  convertedSummary?: ConvertedSummaryResponseDto;
 }
 
 class BalanceBreakdownItemBaseResponseDto {

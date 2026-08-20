@@ -27,6 +27,9 @@ describe("validateEnvironment", () => {
       AUTH_REFRESH_TTL_SECONDS: 2_592_000,
       AUTH_IDLE_TTL_SECONDS: 604_800,
       FRIEND_INVITE_TTL_SECONDS: 604_800,
+      ATTACHMENT_STORAGE_ROOT: "/tmp/splitfinpulse-attachments",
+      ATTACHMENT_UPLOAD_SECRET: "invite-secret-that-is-at-least-32-characters",
+      ATTACHMENT_MAX_BYTES: 10_485_760,
     });
   });
 

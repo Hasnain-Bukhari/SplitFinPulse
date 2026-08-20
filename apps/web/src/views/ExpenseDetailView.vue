@@ -37,6 +37,13 @@ const revisions = useInfiniteQuery(
     enabled: Boolean(expense.data.value),
   })),
 );
+const attachments = useQuery(
+  computed(() => ({
+    queryKey: ["expenses", id.value, "attachments"],
+    queryFn: () => api.attachments(id.value),
+    enabled: Boolean(expense.data.value),
+  })),
+);
 const revisionItems = computed(
   () => revisions.data.value?.pages.flatMap((page) => page.items) ?? [],
 );
@@ -62,6 +69,18 @@ const restore = useMutation({
   mutationFn: () => api.restoreExpense(id.value, expense.data.value!.version),
   onSuccess: refresh,
 });
+const deleteAttachment = useMutation({
+  mutationFn: (attachmentId: string) => api.deleteAttachment(attachmentId),
+  onSuccess: () =>
+    queryClient.invalidateQueries({
+      queryKey: ["expenses", id.value, "attachments"],
+    }),
+});
+async function viewAttachment(attachmentId: string): Promise<void> {
+  const intent = await api.attachmentViewIntent(attachmentId);
+  const base = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
+  window.open(new URL(intent.url, base).href, "_blank", "noopener,noreferrer");
+}
 function removeExpense(): void {
   if (
     window.confirm(
@@ -116,6 +135,14 @@ function personName(id: string): string {
             <p class="text-muted-foreground mt-1 text-sm">
               {{ expense.data.value.expenseDate }} · added by
               {{ expense.data.value.creator.name }}
+            </p>
+            <p class="text-muted-foreground mt-1 text-sm">
+              {{ expense.data.value.category?.name ?? "Uncategorized" }} ·
+              {{
+                expense.data.value.settlement.state
+                  .toLowerCase()
+                  .replace("_", " ")
+              }}
             </p>
           </div>
           <strong class="tabular-nums text-xl">{{
@@ -182,6 +209,43 @@ function personName(id: string): string {
         >
           {{ errorMessage(remove.error.value ?? restore.error.value) }}
         </p>
+        <ul
+          v-if="expense.data.value.settlement.obligations?.length"
+          class="mt-3 divide-y text-sm"
+        >
+          <li
+            v-for="obligation in expense.data.value.settlement.obligations"
+            :key="obligation.sequence"
+            class="py-2"
+          >
+            {{ personName(obligation.debtorId) }} owes
+            {{ personName(obligation.creditorId) }} ·
+            {{ formatCurrency(obligation.allocatedMinor, obligation.currency) }}
+            allocated of
+            {{ formatCurrency(obligation.originalMinor, obligation.currency) }}
+          </li>
+        </ul>
+        <ul
+          v-if="expense.data.value.settlement.resolvingSettlements?.length"
+          class="mt-3 space-y-1 text-sm"
+          aria-label="Resolving payments"
+        >
+          <li
+            v-for="(allocation, index) in expense.data.value.settlement
+              .resolvingSettlements"
+            :key="`${allocation.settlementId}:${allocation.pathSequence}:${allocation.edgeSequence}:${index}`"
+          >
+            <RouterLink
+              v-if="allocation.settlementId"
+              class="text-primary font-semibold"
+              :to="`/settlements/${allocation.settlementId}`"
+            >
+              Payment on {{ allocation.settledOn }}
+            </RouterLink>
+            allocated
+            {{ formatCurrency(allocation.amountMinor, allocation.currency) }}
+          </li>
+        </ul>
       </Card>
 
       <div class="grid gap-4 md:grid-cols-2">
@@ -218,6 +282,57 @@ function personName(id: string): string {
           </ul></Card
         >
       </div>
+      <Card class="p-5">
+        <p class="section-kicker">Settlement allocation</p>
+        <h2 class="font-bold">Resolution status</h2>
+        <p class="mt-2 text-sm">
+          {{ expense.data.value.settlement.state.replace("_", " ") }} ·
+          {{
+            formatCurrency(
+              expense.data.value.settlement.remainingMinor,
+              expense.data.value.currency,
+            )
+          }}
+          remaining
+        </p>
+      </Card>
+      <Card class="p-5">
+        <p class="section-kicker">Receipts</p>
+        <h2 class="font-bold">Attachments</h2>
+        <p
+          v-if="!attachments.data.value?.items.length"
+          class="text-muted-foreground mt-2 text-sm"
+        >
+          No receipts attached.
+        </p>
+        <ul v-else class="mt-3 divide-y">
+          <li
+            v-for="item in attachments.data.value.items"
+            :key="item.id"
+            class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+          >
+            <span
+              ><strong>{{ item.originalName }}</strong> ·
+              {{ item.extraction?.status?.toLowerCase() ?? "pending" }}</span
+            >
+            <span class="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                @click="viewAttachment(item.id)"
+                >View</Button
+              >
+              <Button
+                v-if="expense.data.value.permissions.canEdit"
+                size="sm"
+                variant="outline"
+                @click="deleteAttachment.mutate(item.id)"
+                >Remove</Button
+              >
+            </span>
+          </li>
+        </ul>
+      </Card>
       <Card class="p-5"
         ><p class="section-kicker">Discussion</p>
         <h2 class="mb-3 font-bold">Comments</h2>

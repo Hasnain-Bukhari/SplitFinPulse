@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/vue-query";
-import { computed, nextTick, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from "vue";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
@@ -12,6 +12,9 @@ import {
   type FriendshipSummary,
   type GroupSummary,
   type GroupMemberPage,
+  type ExpenseAttachment,
+  type AttachmentExtraction,
+  type Valuation,
 } from "@/lib/api/client";
 import { sessionQueryOptions } from "@/lib/query-client";
 import {
@@ -22,6 +25,7 @@ import {
   formatMinor,
 } from "./money";
 import { expenseDraftFingerprint } from "./idempotency";
+import { useCurrencyFormatter } from "./useCurrencyFormatter";
 
 const props = withDefaults(
   defineProps<{
@@ -53,6 +57,7 @@ const props = withDefaults(
 );
 
 const emit = defineEmits<{ submit: [input: ExpenseWriteInput] }>();
+const { formatCurrency } = useCurrencyFormatter();
 const session = useQuery(sessionQueryOptions);
 const context = ref(
   props.initial?.groupId
@@ -72,6 +77,7 @@ const form = reactive({
     props.initial?.expenseDate ?? new Date().toLocaleDateString("en-CA"),
   notes: props.initial?.notes ?? "",
   splitMethod: props.initial?.splitMethod ?? ("EQUAL" as ExpenseSplitMethod),
+  categoryId: props.initial?.categoryId ?? "",
 });
 const payerAmounts = reactive<Record<string, string>>({});
 const participantInputs = reactive<Record<string, string>>({});
@@ -81,6 +87,28 @@ const previewResult = ref<ExpensePreview>();
 const previewFingerprint = ref("");
 const localError = ref("");
 const currencyOverridden = ref(false);
+const categories = useQuery({
+  queryKey: ["categories", "active"],
+  queryFn: () => api.categories(),
+});
+const uploadedAttachments = ref<ExpenseAttachment[]>([]);
+const attachmentPreviewUrls = reactive<Record<string, string>>({});
+const attachmentIds = ref<string[]>(props.initial?.attachmentIds ?? []);
+const attachmentError = ref("");
+const uploadProgress = ref<number>();
+const valuation = ref<Valuation>();
+const manualRate = ref("");
+const valuationNotice = ref("");
+const reportingPreview = computed(() =>
+  valuation.value?.convertedPreviews?.find(
+    (item) => item.currency === session.data.value?.user.defaultCurrency,
+  ),
+);
+const reportingQuote = computed(() =>
+  valuation.value?.quotes.find(
+    (item) => item.quoteCurrency === session.data.value?.user.defaultCurrency,
+  ),
+);
 
 const selectedGroupId = computed(() =>
   context.value.startsWith("group:") ? context.value.slice(6) : undefined,
@@ -296,12 +324,31 @@ function buildInput(): ExpenseWriteInput | null {
     payers,
     splitMethod: form.splitMethod,
     participants,
+    ...(form.categoryId ? { categoryId: form.categoryId } : {}),
+    ...(attachmentIds.value.length
+      ? { attachmentIds: attachmentIds.value }
+      : {}),
+    ...(valuation.value ? { valuationId: valuation.value.valuationId } : {}),
   };
 }
 
 const preview = useMutation({
   mutationFn: async () => {
-    const input = buildInput();
+    let input = buildInput();
+    if (!input) throw new Error(localError.value);
+    valuationNotice.value = "";
+    try {
+      valuation.value = await api.valuation({
+        baseCurrency: input.currency,
+        effectiveDate: input.expenseDate,
+        amountMinor: input.totalMinor,
+      });
+    } catch {
+      valuation.value = undefined;
+      valuationNotice.value =
+        "Conversion is unavailable; this expense will remain usable in its native currency.";
+    }
+    input = buildInput();
     if (!input) throw new Error(localError.value);
     return { input, result: await api.previewExpense(input) };
   },
@@ -313,6 +360,130 @@ const preview = useMutation({
     if (error instanceof ApiError) localError.value = error.message;
   },
 });
+
+async function previewWithManualRate(): Promise<void> {
+  localError.value = "";
+  const input = buildInput();
+  const quoteCurrency = session.data.value?.user.defaultCurrency;
+  if (!input || !quoteCurrency) {
+    localError.value ||= "Choose an expense and reporting currency first.";
+    return;
+  }
+  if (
+    !/^(?:0\.[0-9]*[1-9][0-9]*|[1-9][0-9]*(?:\.[0-9]{1,18})?)$/.test(
+      manualRate.value,
+    )
+  ) {
+    localError.value =
+      "Enter a positive rate with no more than 18 decimal places.";
+    return;
+  }
+  try {
+    valuation.value = await api.valuation({
+      baseCurrency: input.currency,
+      effectiveDate: input.expenseDate,
+      amountMinor: input.totalMinor,
+      quoteCurrencies: [quoteCurrency],
+      manualRates: [
+        {
+          quoteCurrency,
+          rateDecimal: manualRate.value,
+          sourceLabel: "User supplied",
+        },
+      ],
+    });
+    const valuedInput = buildInput();
+    if (!valuedInput) return;
+    previewResult.value = await api.previewExpense(valuedInput);
+    previewFingerprint.value = expenseDraftFingerprint(valuedInput);
+  } catch (error) {
+    localError.value =
+      error instanceof ApiError
+        ? error.message
+        : "The manual conversion rate could not be prepared.";
+  }
+}
+
+async function uploadReceipt(event: Event): Promise<void> {
+  attachmentError.value = "";
+  uploadProgress.value = 0;
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  if (!file) return;
+  const previewUrl = URL.createObjectURL(file);
+  try {
+    const intent = await api.createUploadIntent({
+      originalName: file.name,
+      declaredMime: file.type,
+    });
+    const uploaded = await api.uploadAttachment(intent, file, (percent) => {
+      uploadProgress.value = percent;
+    });
+    uploadedAttachments.value.push(uploaded);
+    attachmentIds.value.push(uploaded.id);
+    attachmentPreviewUrls[uploaded.id] = previewUrl;
+    void pollExtraction(uploaded.id);
+  } catch (error) {
+    URL.revokeObjectURL(previewUrl);
+    attachmentError.value =
+      error instanceof ApiError
+        ? error.message
+        : "The receipt could not be uploaded.";
+  } finally {
+    uploadProgress.value = undefined;
+    target.value = "";
+  }
+}
+
+async function removeDraftAttachment(id: string): Promise<void> {
+  try {
+    await api.deleteAttachment(id);
+    uploadedAttachments.value = uploadedAttachments.value.filter(
+      (item) => item.id !== id,
+    );
+    attachmentIds.value = attachmentIds.value.filter((item) => item !== id);
+    const previewUrl = attachmentPreviewUrls[id];
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    delete attachmentPreviewUrls[id];
+  } catch (error) {
+    attachmentError.value =
+      error instanceof ApiError
+        ? error.message
+        : "The receipt could not be removed.";
+  }
+}
+
+onBeforeUnmount(() => {
+  Object.values(attachmentPreviewUrls).forEach((url) =>
+    URL.revokeObjectURL(url),
+  );
+});
+
+async function pollExtraction(id: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const result = await api.attachmentExtraction(id);
+    const item = uploadedAttachments.value.find((row) => row.id === id);
+    if (item) item.extraction = result;
+    if (!["PENDING", "RUNNING"].includes(result.status)) return;
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+  }
+}
+
+function applySuggestion(
+  result: AttachmentExtraction,
+  field: "merchant" | "expenseDate" | "totalText" | "currencyHint",
+): void {
+  if (field === "merchant" && result.merchant)
+    form.description = result.merchant;
+  if (field === "expenseDate" && result.expenseDate)
+    form.expenseDate = result.expenseDate;
+  if (field === "totalText" && result.totalText) form.amount = result.totalText;
+  if (field === "currencyHint" && result.currencyHint) {
+    form.currency = result.currencyHint;
+    currencyOverridden.value = true;
+  }
+  previewResult.value = undefined;
+}
 
 function submit(): void {
   const input = buildInput();
@@ -423,6 +594,126 @@ function submit(): void {
           rows="3"
         />
       </label>
+      <label
+        >Category (optional)<select v-model="form.categoryId">
+          <option value="">Uncategorized</option>
+          <option
+            v-for="item in categories.data.value?.items"
+            :key="item.id"
+            :value="item.id"
+          >
+            {{ item.name }}
+          </option>
+        </select></label
+      >
+    </Card>
+
+    <Card class="p-5 sm:p-6">
+      <p class="section-kicker">Receipt</p>
+      <h2 class="text-lg font-bold">Attach a receipt</h2>
+      <label class="mt-3 block">
+        <span class="sr-only">Choose receipt image or PDF</span>
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp,application/pdf"
+          capture="environment"
+          @change="uploadReceipt"
+        />
+      </label>
+      <p v-if="attachmentError" class="form-error mt-2" role="alert">
+        {{ attachmentError }}
+      </p>
+      <p
+        v-if="uploadProgress !== undefined"
+        class="text-muted-foreground mt-2 text-sm"
+        role="status"
+        aria-live="polite"
+      >
+        Uploading receipt… {{ uploadProgress }}%
+      </p>
+      <ul v-if="uploadedAttachments.length" class="mt-3 space-y-3">
+        <li
+          v-for="item in uploadedAttachments"
+          :key="item.id"
+          class="rounded-lg border p-3 text-sm"
+        >
+          <strong>{{ item.originalName }}</strong>
+          <span class="text-muted-foreground ml-2">{{
+            item.extraction?.status ?? "PENDING"
+          }}</span>
+          <img
+            v-if="
+              item.mime.startsWith('image/') && attachmentPreviewUrls[item.id]
+            "
+            :src="attachmentPreviewUrls[item.id]"
+            :alt="`Preview of ${item.originalName}`"
+            class="mt-2 max-h-48 rounded-md object-contain"
+          />
+          <object
+            v-else-if="
+              item.mime === 'application/pdf' && attachmentPreviewUrls[item.id]
+            "
+            :data="attachmentPreviewUrls[item.id]"
+            type="application/pdf"
+            class="mt-2 h-48 w-full rounded-md border"
+          >
+            PDF preview for {{ item.originalName }}
+          </object>
+          <div
+            v-if="item.extraction?.status === 'SUCCEEDED'"
+            class="mt-2 flex flex-wrap gap-2"
+          >
+            <Button
+              v-if="item.extraction.merchant"
+              type="button"
+              size="sm"
+              variant="outline"
+              @click="applySuggestion(item.extraction, 'merchant')"
+              >Use merchant: {{ item.extraction.merchant }}</Button
+            >
+            <Button
+              v-if="item.extraction.expenseDate"
+              type="button"
+              size="sm"
+              variant="outline"
+              @click="applySuggestion(item.extraction, 'expenseDate')"
+              >Use date: {{ item.extraction.expenseDate }}</Button
+            >
+            <Button
+              v-if="item.extraction.totalText"
+              type="button"
+              size="sm"
+              variant="outline"
+              @click="applySuggestion(item.extraction, 'totalText')"
+              >Use total: {{ item.extraction.totalText }}</Button
+            >
+            <Button
+              v-if="item.extraction.currencyHint"
+              type="button"
+              size="sm"
+              variant="outline"
+              @click="applySuggestion(item.extraction, 'currencyHint')"
+              >Use currency: {{ item.extraction.currencyHint }}</Button
+            >
+          </div>
+          <p
+            v-else-if="item.extraction?.status === 'FAILED'"
+            class="form-error mt-2"
+          >
+            OCR failed; the receipt remains attached.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            class="mt-2"
+            :aria-label="`Remove ${item.originalName}`"
+            @click="removeDraftAttachment(item.id)"
+          >
+            Remove
+          </Button>
+        </li>
+      </ul>
     </Card>
 
     <Card class="p-5 sm:p-6">
@@ -545,6 +836,60 @@ function submit(): void {
       <p v-if="localError || error" class="form-error mt-3" role="alert">
         {{ localError || error }}
       </p>
+      <p v-if="valuation" class="text-muted-foreground mt-3 text-xs">
+        Conversion snapshot: {{ valuation.source }} ·
+        {{ valuation.effectiveDate }} ·
+        {{
+          valuation.status === "UNAVAILABLE"
+            ? "converted summaries unavailable"
+            : "rates captured for this revision"
+        }}
+      </p>
+      <p v-if="reportingPreview" class="mt-1 text-xs">
+        Reporting preview:
+        {{
+          formatCurrency(
+            reportingPreview.amountMinor,
+            reportingPreview.currency,
+          )
+        }}
+      </p>
+      <p v-if="reportingQuote" class="mt-1 text-xs">
+        Exact rational rate: {{ reportingQuote.numerator }} /
+        {{ reportingQuote.denominator }} {{ reportingQuote.quoteCurrency }}
+      </p>
+      <p
+        v-if="valuationNotice"
+        class="text-muted-foreground mt-3 text-xs"
+        role="status"
+      >
+        {{ valuationNotice }}
+      </p>
+      <div
+        v-if="
+          valuation?.status === 'UNAVAILABLE' &&
+          session.data.value?.user.defaultCurrency !== form.currency
+        "
+        class="mt-3 rounded-lg border p-3"
+      >
+        <p class="text-sm font-semibold">Manual conversion fallback</p>
+        <p class="text-muted-foreground mt-1 text-xs">
+          1 {{ form.currency }} equals how many
+          {{ session.data.value?.user.defaultCurrency }}?
+        </p>
+        <div class="mt-2 flex flex-wrap items-end gap-2">
+          <label class="text-sm"
+            >Rate<input v-model="manualRate" inputmode="decimal"
+          /></label>
+          <Button
+            type="button"
+            variant="outline"
+            @click="previewWithManualRate"
+          >
+            Apply rate and re-preview
+          </Button>
+        </div>
+      </div>
       <div class="mt-4 flex flex-wrap gap-2">
         <Button
           type="button"

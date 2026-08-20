@@ -25,7 +25,7 @@ The backend is a modular monolith. Business capabilities own their behavior and 
 
 Complex financial capabilities will separate pure domain logic from application orchestration, Prisma persistence, and HTTP presentation. Small capabilities may use a simpler structure. Controllers validate transport input, invoke an application operation, and map the result; they do not contain business rules.
 
-External systems such as exchange rates, storage, email, notifications, OCR, and payments use narrow provider boundaries when introduced. Redis, queues, object storage, and caches are absent until a concrete requirement exists.
+External systems such as exchange rates, storage, email, notifications, OCR, and payments use narrow provider boundaries. Receipt storage currently uses a private local-filesystem adapter, OCR uses a durable PostgreSQL-leased worker with local Tesseract image processing, and exchange rates use a replaceable Frankfurter v2 adapter with manual and explicitly unavailable fallbacks. Redis, hosted object storage, hosted OCR, and general-purpose distributed caches remain absent.
 
 ## Repository Structure
 
@@ -70,7 +70,7 @@ The PWA caches only static application-shell assets. API and financial responses
 - Concurrent financial edits use versioning where races are possible.
 - Application validation and database constraints enforce invariants together.
 
-Multi-currency records retain their original amount and currency. Conversion policy, rate source, rate timestamp, precision, and reporting currency will be defined before currency conversion ships.
+Multi-currency records retain their original amount and currency as ledger truth. Every new expense and settlement revision records an immutable valuation set, including an explicit unavailable state. Exact rational rates are converted per ledger contribution and rounded once to the reporting currency's minor unit with half-even rounding; converted summaries remain separate, labeled projections and report missing-rate incompleteness.
 
 ## Authentication & Authorization
 
@@ -153,10 +153,19 @@ The Vue application is an installable responsive PWA. Capacitor can wrap the web
   and settlement-aware balance explanations
 - Cursor-paginated personal and group activity feeds, author-owned expense
   comments with tombstones, and append-only personal security history
+- System and owner-managed categories with archived historical snapshots,
+  authorized expense/group/person search, composable URL-backed expense filters,
+  and deterministic allocation-derived open/partial/settled explanations
+- Private local receipt attachments with one-use upload intents, magic-byte and
+  size validation, authenticated viewing, deletion tombstones, and a durable
+  PostgreSQL-leased Tesseract image OCR suggestion workflow
+- Canonical currency metadata, immutable live/manual/unavailable exchange-rate
+  snapshots, exact rational conversion, and labeled optional reporting-currency
+  balance summaries that preserve native totals
 
-No personal financial account, budget, recurring-expense, receipt, or
-currency-conversion records exist yet. External payment initiation and
-reconciliation remain deferred.
+No personal financial account, budget, recurring-expense, notification, or
+reporting module exists yet. External payment initiation and reconciliation,
+hosted storage/OCR, and cloud infrastructure remain deferred.
 
 ## Roadmap
 
@@ -167,14 +176,17 @@ product plan.
 2. Accounts, friends, and groups with authorization boundaries.
 3. Expenses with multiple payers, split strategies, audit history, and deterministic ledger generation.
 4. Balances, partial/full settlements, debt simplification, activity, comments, and security audit.
-5. Categories, budgets, recurring expenses, currencies, attachments, and notifications.
-6. Search, analytics, reports, administration, native packaging, and evidence-driven AI assistance.
+5. Budgets, recurring expenses, and notifications.
+6. Analytics, reports, administration, native packaging, and evidence-driven AI assistance.
 
 ## Important Decisions
 
 - Start as a modular monolith; extraction requires evidence.
 - Preserve financial events and derive balances from auditable records.
 - Use integer minor units with explicit currencies.
+- Derive expense settlement state from immutable allocation paths; never store a mutable settled flag.
+- Keep receipt files private behind storage/OCR interfaces and authenticated short-lived intents.
+- Preserve native currency obligations and treat converted summaries as explicit write-time-snapshot valuations.
 - Keep the API client-agnostic and REST/OpenAPI based.
 - Keep shared workspace packages, Redis, queues, object storage, and provider integrations deferred until they solve a real need.
 - Maintain exactly this project knowledge document rather than parallel summaries or diaries.

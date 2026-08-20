@@ -3,6 +3,7 @@ import { PrismaService } from "../database/prisma.service";
 import { calculateNetPositions, simplifyDebts } from "../expenses/domain";
 import { expenseNotFound, financialError } from "../expenses/expense-errors";
 import type { BalanceBreakdownQueryDto } from "./balances.dto";
+import { CurrenciesService } from "../currencies/currencies.service";
 
 type Entry = {
   id: string;
@@ -31,9 +32,17 @@ type Entry = {
 
 @Injectable()
 export class BalancesService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(CurrenciesService) private readonly currencies: CurrenciesService,
+  ) {}
 
-  async overall(userId: string, cursor: string | undefined, limit: number) {
+  async overall(
+    userId: string,
+    cursor: string | undefined,
+    limit: number,
+    reportingCurrency?: string,
+  ) {
     const offset = cursor ? this.decodeOffsetCursor(cursor) : 0;
     const pageLimit = Number(limit ?? 50);
     type TotalRow = {
@@ -177,10 +186,19 @@ export class BalancesService {
               "base64url",
             )
           : null,
+      ...(reportingCurrency
+        ? {
+            convertedSummary: await this.convertedSummary(
+              userId,
+              reportingCurrency,
+              {},
+            ),
+          }
+        : {}),
     };
   }
 
-  async group(userId: string, groupId: string) {
+  async group(userId: string, groupId: string, reportingCurrency?: string) {
     await this.requireGroupRead(userId, groupId);
     const [group, entries] = await Promise.all([
       this.prisma.group.findUnique({
@@ -258,10 +276,23 @@ export class BalancesService {
       positions,
       rawObligations: transfers.map(presentTransfer),
       recommendations: simplified.map(presentTransfer),
+      ...(reportingCurrency
+        ? {
+            convertedSummary: await this.convertedSummary(
+              userId,
+              reportingCurrency,
+              { groupId },
+            ),
+          }
+        : {}),
     };
   }
 
-  async friend(userId: string, friendshipId: string) {
+  async friend(
+    userId: string,
+    friendshipId: string,
+    reportingCurrency?: string,
+  ) {
     const friendship = await this.prisma.friendship.findFirst({
       where: {
         id: friendshipId,
@@ -282,6 +313,15 @@ export class BalancesService {
       friendshipId,
       friend,
       amounts: this.userSummaries(userId, entries),
+      ...(reportingCurrency
+        ? {
+            convertedSummary: await this.convertedSummary(
+              userId,
+              reportingCurrency,
+              { friendshipId },
+            ),
+          }
+        : {}),
     };
   }
 
@@ -565,6 +605,121 @@ export class BalancesService {
         youAreOwedMinor: (net > 0n ? net : 0n).toString(),
         netMinor: net.toString(),
       }));
+  }
+
+  private async convertedSummary(
+    userId: string,
+    reportingCurrency: string,
+    context: { groupId?: string; friendshipId?: string },
+  ) {
+    const entries = await this.prisma.ledgerEntry.findMany({
+      where: {
+        OR: [
+          {
+            revision: {
+              currentFor: {
+                is: {
+                  status: "ACTIVE",
+                  ...(context.groupId ? { groupId: context.groupId } : {}),
+                  ...(context.friendshipId
+                    ? { friendshipId: context.friendshipId }
+                    : {}),
+                },
+              },
+            },
+          },
+          {
+            settlementRevision: {
+              currentFor: {
+                is: {
+                  status: "ACTIVE",
+                  ...(context.groupId ? { groupId: context.groupId } : {}),
+                  ...(context.friendshipId
+                    ? { friendshipId: context.friendshipId }
+                    : {}),
+                },
+              },
+            },
+          },
+        ],
+        AND: [{ OR: [{ debtorId: userId }, { creditorId: userId }] }],
+      },
+      include: {
+        revision: {
+          select: {
+            exchangeRateSet: {
+              include: {
+                quotes: { where: { quoteCurrency: reportingCurrency } },
+              },
+            },
+          },
+        },
+        settlementRevision: {
+          select: {
+            exchangeRateSet: {
+              include: {
+                quotes: { where: { quoteCurrency: reportingCurrency } },
+              },
+            },
+          },
+        },
+      },
+    });
+    let net = 0n;
+    let incomplete = false;
+    const sources = new Map<
+      string,
+      {
+        source: string;
+        effectiveDate: string;
+        capturedAt: Date;
+        status: string;
+        manual: boolean;
+        stale: boolean;
+      }
+    >();
+    const missingCurrencies = new Set<string>();
+    for (const entry of entries) {
+      const rateSet =
+        entry.revision?.exchangeRateSet ??
+        entry.settlementRevision?.exchangeRateSet;
+      const quote = rateSet?.quotes[0];
+      if (!rateSet || !quote) {
+        incomplete = true;
+        missingCurrencies.add(entry.currency);
+        continue;
+      }
+      const converted = this.currencies.convert(
+        entry.amountMinor,
+        BigInt(quote.numerator),
+        BigInt(quote.denominator),
+        this.currencies.minorUnit(entry.currency),
+        this.currencies.minorUnit(reportingCurrency),
+      );
+      net += entry.creditorId === userId ? converted : -converted;
+      sources.set(rateSet.id, {
+        source: rateSet.source,
+        effectiveDate: rateSet.effectiveDate.toISOString().slice(0, 10),
+        capturedAt: rateSet.capturedAt,
+        status: rateSet.status,
+        manual: rateSet.status === "MANUAL",
+        stale: false,
+      });
+    }
+    return {
+      reportingCurrency,
+      youOweMinor: (net < 0n ? -net : 0n).toString(),
+      youAreOwedMinor: (net > 0n ? net : 0n).toString(),
+      netMinor: net.toString(),
+      incomplete,
+      sources: [...sources.values()],
+      warnings: [...missingCurrencies]
+        .sort()
+        .map(
+          (currency) =>
+            `No ${currency}/${reportingCurrency} quote exists in the source revision snapshot`,
+        ),
+    };
   }
 
   private aggregateTransfers(entries: readonly Entry[]) {
