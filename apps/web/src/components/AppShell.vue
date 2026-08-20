@@ -30,6 +30,7 @@ const navigation = [
   { label: "Activity", to: "/activity", icon: Activity },
   { label: "Settings", to: "/settings/profile", icon: Settings },
 ];
+const mobileNavigation = navigation.filter((item) => item.label !== "Settings");
 
 const route = useRoute();
 const router = useRouter();
@@ -144,7 +145,7 @@ const logout = useMutation({
 
     <nav aria-label="Mobile navigation" class="mobile-nav">
       <RouterLink
-        v-for="item in navigation"
+        v-for="item in mobileNavigation"
         :key="item.to"
         :to="item.to"
         class="mobile-nav-link"

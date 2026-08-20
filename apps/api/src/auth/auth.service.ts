@@ -12,6 +12,7 @@ import type { AuthSession, User } from "../generated/prisma/client";
 import type { Environment } from "../config/environment";
 import { PrismaService } from "../database/prisma.service";
 import { ApiException } from "../http/api.exception";
+import { AuditService, auditActions } from "../audit/audit.service";
 import { presentSession, presentUser } from "./auth.presenter";
 import type {
   ApplicationTokens,
@@ -36,6 +37,7 @@ export class AuthService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(GoogleOidcService) private readonly google: GoogleOidcService,
     @Inject(TokenService) private readonly tokens: TokenService,
+    @Inject(AuditService) private readonly audit: AuditService,
     @Inject(ConfigService)
     private readonly config: ConfigService<Environment, true>,
   ) {}
@@ -72,6 +74,7 @@ export class AuthService {
     code: string,
     state: string,
     userAgent?: string,
+    requestId?: string,
   ): Promise<AuthResult> {
     const transaction = await this.prisma.oidcTransaction.findUnique({
       where: { stateHash: this.hash(state) },
@@ -105,6 +108,7 @@ export class AuthService {
         claims,
         transaction.sessionId,
         transaction.returnTo,
+        requestId,
       );
     }
 
@@ -125,6 +129,13 @@ export class AuthService {
         await database.accountLifecycleEvent.create({
           data: { userId: user.id, type: "REACTIVATED" },
         });
+        await this.audit.record(database, {
+          actorId: user.id,
+          action: auditActions.accountReactivated,
+          targetType: "USER",
+          targetId: user.id,
+          ...(requestId ? { requestId } : {}),
+        });
       });
       user.status = "ACTIVE";
       user.deactivatedAt = null;
@@ -135,7 +146,7 @@ export class AuthService {
         "This account is not active",
       );
     }
-    return this.createSession(user, userAgent, transaction.returnTo);
+    return this.createSession(user, userAgent, transaction.returnTo, requestId);
   }
 
   async session(principal: AuthenticatedPrincipal): Promise<SessionEnvelope> {
@@ -176,7 +187,7 @@ export class AuthService {
     }
   }
 
-  async refresh(refreshToken: string): Promise<AuthResult> {
+  async refresh(refreshToken: string, requestId?: string): Promise<AuthResult> {
     let claims: Awaited<ReturnType<TokenService["verifyRefresh"]>>;
     try {
       claims = await this.tokens.verifyRefresh(refreshToken);
@@ -210,9 +221,20 @@ export class AuthService {
       session.tokenVersion !== claims.ver ||
       !this.tokens.hashesMatch(refreshToken, session.refreshTokenHash)
     ) {
-      await this.prisma.authSession.update({
-        where: { id: session.id },
-        data: { revokedAt: now, revokedReason: "REFRESH_REUSE" },
+      await this.prisma.withTransaction(async (database) => {
+        await database.authSession.update({
+          where: { id: session.id },
+          data: { revokedAt: now, revokedReason: "REFRESH_REUSE" },
+        });
+        await this.audit.record(database, {
+          actorId: session.userId,
+          sessionId: session.id,
+          action: auditActions.refreshReuseDetected,
+          targetType: "AUTH_SESSION",
+          targetId: session.id,
+          outcome: "SECURITY_SIGNAL",
+          ...(requestId ? { requestId } : {}),
+        });
       });
       throw new ApiException(
         HttpStatus.UNAUTHORIZED,
@@ -241,36 +263,73 @@ export class AuthService {
   async revoke(
     principal: AuthenticatedPrincipal,
     sessionId: string,
+    requestId?: string,
   ): Promise<void> {
-    const result = await this.prisma.authSession.updateMany({
-      where: { id: sessionId, userId: principal.userId, revokedAt: null },
-      data: { revokedAt: new Date(), revokedReason: "USER_REVOKED" },
+    await this.prisma.withTransaction(async (database) => {
+      const result = await database.authSession.updateMany({
+        where: { id: sessionId, userId: principal.userId, revokedAt: null },
+        data: { revokedAt: new Date(), revokedReason: "USER_REVOKED" },
+      });
+      if (result.count !== 1) {
+        throw new ApiException(
+          HttpStatus.NOT_FOUND,
+          "SESSION_NOT_FOUND",
+          "Session not found",
+        );
+      }
+      await this.audit.record(database, {
+        actorId: principal.userId,
+        sessionId: principal.sessionId,
+        action: auditActions.sessionRevoked,
+        targetType: "AUTH_SESSION",
+        targetId: sessionId,
+        ...(requestId ? { requestId } : {}),
+      });
     });
-    if (result.count !== 1) {
-      throw new ApiException(
-        HttpStatus.NOT_FOUND,
-        "SESSION_NOT_FOUND",
-        "Session not found",
-      );
-    }
   }
 
-  async revokeAll(principal: AuthenticatedPrincipal): Promise<void> {
-    await this.prisma.authSession.updateMany({
-      where: { userId: principal.userId, revokedAt: null },
-      data: { revokedAt: new Date(), revokedReason: "USER_REVOKED_ALL" },
+  async revokeAll(
+    principal: AuthenticatedPrincipal,
+    requestId?: string,
+  ): Promise<void> {
+    await this.prisma.withTransaction(async (database) => {
+      await database.authSession.updateMany({
+        where: { userId: principal.userId, revokedAt: null },
+        data: { revokedAt: new Date(), revokedReason: "USER_REVOKED_ALL" },
+      });
+      await this.audit.record(database, {
+        actorId: principal.userId,
+        sessionId: principal.sessionId,
+        action: auditActions.allSessionsRevoked,
+        targetType: "USER",
+        targetId: principal.userId,
+        ...(requestId ? { requestId } : {}),
+      });
     });
   }
 
-  async logout(principal?: AuthenticatedPrincipal): Promise<void> {
+  async logout(
+    principal?: AuthenticatedPrincipal,
+    requestId?: string,
+  ): Promise<void> {
     if (!principal) return;
-    await this.prisma.authSession.updateMany({
-      where: {
-        id: principal.sessionId,
-        userId: principal.userId,
-        revokedAt: null,
-      },
-      data: { revokedAt: new Date(), revokedReason: "LOGOUT" },
+    await this.prisma.withTransaction(async (database) => {
+      await database.authSession.updateMany({
+        where: {
+          id: principal.sessionId,
+          userId: principal.userId,
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date(), revokedReason: "LOGOUT" },
+      });
+      await this.audit.record(database, {
+        actorId: principal.userId,
+        sessionId: principal.sessionId,
+        action: auditActions.loggedOut,
+        targetType: "AUTH_SESSION",
+        targetId: principal.sessionId,
+        ...(requestId ? { requestId } : {}),
+      });
     });
   }
 
@@ -351,27 +410,40 @@ export class AuthService {
     user: User,
     userAgent: string | undefined,
     returnTo: string,
+    requestId?: string,
   ): Promise<AuthResult> {
     const id = randomUUID();
     const version = 1;
     const refreshToken = await this.tokens.refresh(user.id, id, version);
     const now = Date.now();
-    const session = await this.prisma.authSession.create({
-      data: {
-        id,
-        userId: user.id,
-        refreshTokenHash: this.tokens.hash(refreshToken),
-        tokenVersion: version,
-        deviceDescription: this.device(userAgent),
-        absoluteExpiresAt: new Date(
-          now +
-            this.config.get("AUTH_REFRESH_TTL_SECONDS", { infer: true }) * 1000,
-        ),
-        idleExpiresAt: new Date(
-          now +
-            this.config.get("AUTH_IDLE_TTL_SECONDS", { infer: true }) * 1000,
-        ),
-      },
+    const session = await this.prisma.withTransaction(async (database) => {
+      const created = await database.authSession.create({
+        data: {
+          id,
+          userId: user.id,
+          refreshTokenHash: this.tokens.hash(refreshToken),
+          tokenVersion: version,
+          deviceDescription: this.device(userAgent),
+          absoluteExpiresAt: new Date(
+            now +
+              this.config.get("AUTH_REFRESH_TTL_SECONDS", { infer: true }) *
+                1000,
+          ),
+          idleExpiresAt: new Date(
+            now +
+              this.config.get("AUTH_IDLE_TTL_SECONDS", { infer: true }) * 1000,
+          ),
+        },
+      });
+      await this.audit.record(database, {
+        actorId: user.id,
+        sessionId: id,
+        action: auditActions.loginSucceeded,
+        targetType: "AUTH_SESSION",
+        targetId: id,
+        ...(requestId ? { requestId } : {}),
+      });
+      return created;
     });
     return {
       tokens: {
@@ -452,6 +524,7 @@ export class AuthService {
     claims: GoogleIdentityClaims,
     sessionId: string,
     returnTo: string,
+    requestId?: string,
   ): Promise<AuthResult> {
     const session = await this.prisma.authSession.findUnique({
       where: { id: sessionId },
@@ -469,9 +542,20 @@ export class AuthService {
     ) {
       throw this.authRequired();
     }
-    const updated = await this.prisma.authSession.update({
-      where: { id: session.id },
-      data: { reauthenticatedAt: new Date() },
+    const updated = await this.prisma.withTransaction(async (database) => {
+      const value = await database.authSession.update({
+        where: { id: session.id },
+        data: { reauthenticatedAt: new Date() },
+      });
+      await this.audit.record(database, {
+        actorId: session.userId,
+        sessionId: session.id,
+        action: auditActions.reauthenticated,
+        targetType: "AUTH_SESSION",
+        targetId: session.id,
+        ...(requestId ? { requestId } : {}),
+      });
+      return value;
     });
     return this.rotateSession(updated, session.user, returnTo);
   }

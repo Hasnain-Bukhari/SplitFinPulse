@@ -21,13 +21,18 @@ const contexts = computed(
 
 <template>
   <div class="mx-auto max-w-6xl space-y-4">
-    <div>
-      <p class="section-kicker">Financial position</p>
-      <h1 class="text-2xl font-bold">Balances</h1>
-      <p class="text-muted-foreground mt-1 text-sm">
-        Currencies remain separate. Every amount can be traced to its source
-        expenses.
-      </p>
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p class="section-kicker">Financial position</p>
+        <h1 class="text-2xl font-bold">Balances</h1>
+        <p class="text-muted-foreground mt-1 text-sm">
+          Currencies remain separate. Every amount can be traced to expenses and
+          payments.
+        </p>
+      </div>
+      <Button v-if="contexts.length" as-child
+        ><RouterLink to="/settlements/new">Settle up</RouterLink></Button
+      >
     </div>
     <p
       v-if="balances.isPending.value"

@@ -7,6 +7,7 @@ import { AppModule } from "../src/app.module";
 import { configureApplication } from "../src/application";
 import { GoogleOidcService } from "../src/auth/google-oidc.service";
 import { PrismaService } from "../src/database/prisma.service";
+import { deleteTraceRecords } from "./test-cleanup";
 
 interface TestSession {
   userId: string;
@@ -86,6 +87,7 @@ describe("groups and memberships", () => {
       secondInvitee?.userId,
     ].filter((value): value is string => Boolean(value));
     if (userIds.length) {
+      await deleteTraceRecords(prisma, userIds);
       // Group records are removed first because users are intentionally retained
       // by foreign keys while membership history exists.
       await prisma.$transaction([

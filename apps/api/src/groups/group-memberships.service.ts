@@ -1,4 +1,9 @@
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
+import {
+  ActivitiesService,
+  activityTypes,
+} from "../activities/activities.service";
+import { AuditService, auditActions } from "../audit/audit.service";
 import { Prisma } from "../generated/prisma/client";
 import { PrismaService } from "../database/prisma.service";
 import { ApiException } from "../http/api.exception";
@@ -21,6 +26,8 @@ export class GroupMembershipsService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(GroupAccessService) private readonly access: GroupAccessService,
     @Inject(GroupsService) private readonly groups: GroupsService,
+    @Inject(ActivitiesService) private readonly activities: ActivitiesService,
+    @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
   async list(
@@ -99,6 +106,22 @@ export class GroupMembershipsService {
         const created = await database.groupMember.create({
           data: { groupId, userId: input.userId, role: "MEMBER" },
         });
+        const audienceUserIds = await this.activeUserIds(database, groupId);
+        await this.activities.record(database, {
+          type: activityTypes.groupMemberAdded,
+          actorId: userId,
+          entityType: "GROUP_MEMBER",
+          entityId: created.id,
+          groupId,
+          audienceUserIds,
+          payload: { userId: input.userId, memberName: target.name },
+        });
+        await this.audit.record(database, {
+          actorId: userId,
+          action: auditActions.groupMemberAdded,
+          targetType: "GROUP_MEMBER",
+          targetId: created.id,
+        });
         return created.id;
       });
     } catch (error) {
@@ -143,6 +166,22 @@ export class GroupMembershipsService {
         where: { id: target.id },
         data: { role },
       });
+      const audienceUserIds = await this.activeUserIds(database, groupId);
+      await this.activities.record(database, {
+        type: activityTypes.groupMemberRoleUpdated,
+        actorId: userId,
+        entityType: "GROUP_MEMBER",
+        entityId: target.id,
+        groupId,
+        audienceUserIds,
+        payload: { userId: target.userId, role },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.groupRoleChanged,
+        targetType: "GROUP_MEMBER",
+        targetId: target.id,
+      });
     });
     return this.byId(membershipId);
   }
@@ -173,6 +212,22 @@ export class GroupMembershipsService {
       await database.groupMember.update({
         where: { id: target.id },
         data: { role: "OWNER" },
+      });
+      const audienceUserIds = await this.activeUserIds(database, groupId);
+      await this.activities.record(database, {
+        type: activityTypes.groupOwnershipTransferred,
+        actorId: userId,
+        entityType: "GROUP_MEMBER",
+        entityId: target.id,
+        groupId,
+        audienceUserIds,
+        payload: { userId: target.userId },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.groupOwnershipTransferred,
+        targetType: "GROUP_MEMBER",
+        targetId: target.id,
       });
     });
     return this.groups.detail(userId, groupId);
@@ -205,9 +260,25 @@ export class GroupMembershipsService {
       if (!canManageMember(actor.role, target.role)) throw groupForbidden();
       if (target.role === "OWNER") throw ownerRequired();
       await this.requireZeroBalance(database, groupId, target.userId);
+      const audienceUserIds = await this.activeUserIds(database, groupId);
       await database.groupMember.update({
         where: { id: target.id },
         data: { leftAt: new Date() },
+      });
+      await this.activities.record(database, {
+        type: activityTypes.groupMemberRemoved,
+        actorId: userId,
+        entityType: "GROUP_MEMBER",
+        entityId: target.id,
+        groupId,
+        audienceUserIds,
+        payload: { userId: target.userId },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.groupMemberRemoved,
+        targetType: "GROUP_MEMBER",
+        targetId: target.id,
       });
     });
   }
@@ -222,9 +293,25 @@ export class GroupMembershipsService {
       await this.access.requireActiveGroup(database, groupId);
       if (membership.role === "OWNER") throw ownerRequired();
       await this.requireZeroBalance(database, groupId, userId);
+      const audienceUserIds = await this.activeUserIds(database, groupId);
       await database.groupMember.update({
         where: { id: membership.id },
         data: { leftAt: new Date() },
+      });
+      await this.activities.record(database, {
+        type: activityTypes.groupMemberLeft,
+        actorId: userId,
+        entityType: "GROUP_MEMBER",
+        entityId: membership.id,
+        groupId,
+        audienceUserIds,
+        payload: { userId },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.groupMemberLeft,
+        targetType: "GROUP_MEMBER",
+        targetId: membership.id,
       });
     });
   }
@@ -252,8 +339,15 @@ export class GroupMembershipsService {
   ): Promise<void> {
     const entries = await database.ledgerEntry.findMany({
       where: {
-        revision: { currentFor: { is: { status: "ACTIVE", groupId } } },
-        OR: [{ debtorId: userId }, { creditorId: userId }],
+        OR: [
+          { revision: { currentFor: { is: { status: "ACTIVE", groupId } } } },
+          {
+            settlementRevision: {
+              currentFor: { is: { status: "ACTIVE", groupId } },
+            },
+          },
+        ],
+        AND: [{ OR: [{ debtorId: userId }, { creditorId: userId }] }],
       },
       select: {
         debtorId: true,
@@ -279,5 +373,16 @@ export class GroupMembershipsService {
         "Settle the member's group balance before they leave",
       );
     }
+  }
+
+  private async activeUserIds(
+    database: Prisma.TransactionClient,
+    groupId: string,
+  ) {
+    const members = await database.groupMember.findMany({
+      where: { groupId, leftAt: null },
+      select: { userId: true },
+    });
+    return members.map((member) => member.userId);
   }
 }

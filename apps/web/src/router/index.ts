@@ -5,7 +5,6 @@ import AuthCallbackView from "@/views/AuthCallbackView.vue";
 import DataSettingsView from "@/views/DataSettingsView.vue";
 import LoginView from "@/views/LoginView.vue";
 import OverviewView from "@/views/OverviewView.vue";
-import PlaceholderView from "@/views/PlaceholderView.vue";
 import ProfileSettingsView from "@/views/ProfileSettingsView.vue";
 import ReactivateView from "@/views/ReactivateView.vue";
 import SecuritySettingsView from "@/views/SecuritySettingsView.vue";
@@ -22,6 +21,9 @@ import ExpenseDetailView from "@/views/ExpenseDetailView.vue";
 import BalancesView from "@/views/BalancesView.vue";
 import GroupBalancesView from "@/views/GroupBalancesView.vue";
 import FriendBalanceView from "@/views/FriendBalanceView.vue";
+import ActivityView from "@/views/ActivityView.vue";
+import SettleUpView from "@/views/SettleUpView.vue";
+import SettlementDetailView from "@/views/SettlementDetailView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -83,6 +85,24 @@ export const router = createRouter({
           meta: { title: "Balances" },
         },
         {
+          path: "settlements/new",
+          name: "create-settlement",
+          component: SettleUpView,
+          meta: { title: "Settle up" },
+        },
+        {
+          path: "settlements/:settlementId",
+          name: "settlement-detail",
+          component: SettlementDetailView,
+          meta: { title: "Payment" },
+        },
+        {
+          path: "settlements/:settlementId/correct",
+          name: "correct-settlement",
+          component: SettleUpView,
+          meta: { title: "Correct payment" },
+        },
+        {
           path: "friends",
           name: "friends",
           component: FriendsView,
@@ -119,6 +139,12 @@ export const router = createRouter({
           meta: { title: "Group balances" },
         },
         {
+          path: "groups/:groupId/activity",
+          name: "group-activity",
+          component: ActivityView,
+          meta: { title: "Group activity" },
+        },
+        {
           path: "friends/:friendshipId/balance",
           name: "friend-balance",
           component: FriendBalanceView,
@@ -127,7 +153,7 @@ export const router = createRouter({
         {
           path: "activity",
           name: "activity",
-          component: PlaceholderView,
+          component: ActivityView,
           meta: { title: "Activity" },
         },
         { path: "settings", redirect: "/settings/profile" },

@@ -1,6 +1,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import {
+  ActivitiesService,
+  activityTypes,
+} from "../activities/activities.service";
+import { AuditService, auditActions } from "../audit/audit.service";
 import { Prisma } from "../generated/prisma/client";
 import type { Environment } from "../config/environment";
 import { PrismaService } from "../database/prisma.service";
@@ -24,6 +29,8 @@ export class GroupInvitationsService {
     private readonly config: ConfigService<Environment, true>,
     @Inject(GroupAccessService) private readonly access: GroupAccessService,
     @Inject(GroupsService) private readonly groups: GroupsService,
+    @Inject(ActivitiesService) private readonly activities: ActivitiesService,
+    @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
   async create(userId: string, groupId: string) {
@@ -37,7 +44,7 @@ export class GroupInvitationsService {
       );
       await this.access.requireActiveGroup(database, groupId);
       if (!canEditGroup(membership.role)) throw groupForbidden();
-      return database.groupInvitation.create({
+      const created = await database.groupInvitation.create({
         data: {
           groupId,
           createdById: userId,
@@ -45,6 +52,13 @@ export class GroupInvitationsService {
           expiresAt,
         },
       });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.groupInvitationCreated,
+        targetType: "GROUP_INVITATION",
+        targetId: created.id,
+      });
+      return created;
     });
     const inviteUrl = new URL(
       `/group-invite/${token}`,
@@ -63,6 +77,7 @@ export class GroupInvitationsService {
     cursor: string | undefined,
     limit: number,
   ) {
+    limit ??= 20;
     const membership = await this.access.requireMembership(
       this.prisma,
       userId,
@@ -126,6 +141,12 @@ export class GroupInvitationsService {
         where: { id: invitation.id },
         data: { revokedAt: new Date() },
       });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.groupInvitationRevoked,
+        targetType: "GROUP_INVITATION",
+        targetId: invitation.id,
+      });
     });
   }
 
@@ -184,8 +205,27 @@ export class GroupInvitationsService {
           where: { groupId: group.id, userId, leftAt: null },
         });
         if (existing) return;
-        await database.groupMember.create({
+        const membership = await database.groupMember.create({
           data: { groupId: group.id, userId, role: "MEMBER" },
+        });
+        const members = await database.groupMember.findMany({
+          where: { groupId: group.id, leftAt: null },
+          select: { userId: true },
+        });
+        await this.activities.record(database, {
+          type: activityTypes.groupMemberAdded,
+          actorId: userId,
+          entityType: "GROUP_MEMBER",
+          entityId: membership.id,
+          groupId: group.id,
+          audienceUserIds: members.map((member) => member.userId),
+          payload: { userId, memberName: user.name },
+        });
+        await this.audit.record(database, {
+          actorId: userId,
+          action: auditActions.groupMemberAdded,
+          targetType: "GROUP_MEMBER",
+          targetId: membership.id,
         });
       });
     } catch (error) {

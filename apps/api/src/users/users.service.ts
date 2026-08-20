@@ -4,6 +4,11 @@ import { ConfigService } from "@nestjs/config";
 import type { Environment } from "../config/environment";
 import { PrismaService } from "../database/prisma.service";
 import { ApiException } from "../http/api.exception";
+import {
+  AuditService,
+  auditActions,
+  personalSecurityActions,
+} from "../audit/audit.service";
 import { presentSession, presentUser } from "../auth/auth.presenter";
 import type { AuthenticatedPrincipal } from "../auth/auth.types";
 import type { UpdateProfileDto } from "./user.dto";
@@ -22,6 +27,7 @@ export class UsersService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ConfigService)
     private readonly config: ConfigService<Environment, true>,
+    @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
   async me(userId: string) {
@@ -30,7 +36,7 @@ export class UsersService {
     return presentUser(user);
   }
 
-  async update(userId: string, input: UpdateProfileDto) {
+  async update(userId: string, input: UpdateProfileDto, requestId?: string) {
     if (
       input.defaultCurrency &&
       !isSupportedCurrencyCode(input.defaultCurrency)
@@ -51,36 +57,45 @@ export class UsersService {
         throw this.invalidPreference("Unsupported locale");
       }
     }
-    const existing = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
-    if (!existing || existing.status !== "ACTIVE") throw this.authRequired();
-
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        ...(input.name !== undefined ? { name: input.name.trim() } : {}),
-        ...(input.avatarVisible !== undefined
-          ? {
-              avatarUrl: input.avatarVisible
-                ? existing.providerAvatarUrl
-                : null,
-            }
-          : {}),
-        ...(input.defaultCurrency
-          ? { defaultCurrency: input.defaultCurrency }
-          : {}),
-        ...(input.timezone ? { timezone: input.timezone } : {}),
-        ...(locale ? { locale } : {}),
-        ...(input.notificationPreferences
-          ? {
-              notifyExpenseActivity:
-                input.notificationPreferences.expenseActivity,
-              notifyReminders: input.notificationPreferences.reminders,
-              notifyInvitations: input.notificationPreferences.invitations,
-            }
-          : {}),
-      },
+    const user = await this.prisma.withTransaction(async (database) => {
+      const existing = await database.user.findUnique({
+        where: { id: userId },
+      });
+      if (!existing || existing.status !== "ACTIVE") throw this.authRequired();
+      const updated = await database.user.update({
+        where: { id: userId },
+        data: {
+          ...(input.name !== undefined ? { name: input.name.trim() } : {}),
+          ...(input.avatarVisible !== undefined
+            ? {
+                avatarUrl: input.avatarVisible
+                  ? existing.providerAvatarUrl
+                  : null,
+              }
+            : {}),
+          ...(input.defaultCurrency
+            ? { defaultCurrency: input.defaultCurrency }
+            : {}),
+          ...(input.timezone ? { timezone: input.timezone } : {}),
+          ...(locale ? { locale } : {}),
+          ...(input.notificationPreferences
+            ? {
+                notifyExpenseActivity:
+                  input.notificationPreferences.expenseActivity,
+                notifyReminders: input.notificationPreferences.reminders,
+                notifyInvitations: input.notificationPreferences.invitations,
+              }
+            : {}),
+        },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.profileUpdated,
+        targetType: "USER",
+        targetId: userId,
+        ...(requestId ? { requestId } : {}),
+      });
+      return updated;
     });
     return presentUser(user);
   }
@@ -106,10 +121,20 @@ export class UsersService {
     };
   }
 
-  async exportAccount(principal: AuthenticatedPrincipal) {
+  async exportAccount(principal: AuthenticatedPrincipal, requestId?: string) {
     await this.requireRecentAuthentication(principal.sessionId);
-    await this.prisma.accountLifecycleEvent.create({
-      data: { userId: principal.userId, type: "DATA_EXPORTED" },
+    await this.prisma.withTransaction(async (database) => {
+      await database.accountLifecycleEvent.create({
+        data: { userId: principal.userId, type: "DATA_EXPORTED" },
+      });
+      await this.audit.record(database, {
+        actorId: principal.userId,
+        sessionId: principal.sessionId,
+        action: auditActions.accountDataExported,
+        targetType: "USER",
+        targetId: principal.userId,
+        ...(requestId ? { requestId } : {}),
+      });
     });
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: principal.userId },
@@ -126,6 +151,15 @@ export class UsersService {
           orderBy: { joinedAt: "asc" },
         },
         groupInvitations: { orderBy: { createdAt: "asc" } },
+        expenseComments: { orderBy: { createdAt: "asc" } },
+        activityAudience: {
+          include: { event: true },
+          orderBy: { createdAt: "asc" },
+        },
+        auditEvents: {
+          where: { action: { in: [...personalSecurityActions] } },
+          orderBy: { createdAt: "asc" },
+        },
       },
     });
     const expenses = await this.prisma.expense.findMany({
@@ -156,8 +190,33 @@ export class UsersService {
       },
       orderBy: { createdAt: "asc" },
     });
+    const settlements = await this.prisma.settlement.findMany({
+      where: {
+        OR: [
+          { creatorId: principal.userId },
+          {
+            revisions: {
+              some: {
+                OR: [
+                  { actorId: principal.userId },
+                  { fromUserId: principal.userId },
+                  { toUserId: principal.userId },
+                ],
+              },
+            },
+          },
+        ],
+      },
+      include: {
+        revisions: {
+          include: { ledgerEntries: true },
+          orderBy: { revision: "asc" },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       generatedAt: new Date().toISOString(),
       profile: presentUser(user),
       identities: user.identities.map((identity) => ({
@@ -263,10 +322,77 @@ export class UsersService {
           })),
         })),
       })),
+      settlements: settlements.map((settlement) => ({
+        id: settlement.id,
+        creatorId: settlement.creatorId,
+        groupId: settlement.groupId,
+        friendshipId: settlement.friendshipId,
+        status: settlement.status,
+        version: settlement.version,
+        currentRevisionId: settlement.currentRevisionId,
+        replacesSettlementId: settlement.replacesSettlementId,
+        createdAt: settlement.createdAt,
+        updatedAt: settlement.updatedAt,
+        reversedAt: settlement.reversedAt,
+        revisions: settlement.revisions.map((revision) => ({
+          id: revision.id,
+          revision: revision.revision,
+          action: revision.action,
+          actorId: revision.actorId,
+          fromUserId: revision.fromUserId,
+          toUserId: revision.toUserId,
+          amountMinor: revision.amountMinor.toString(),
+          currency: revision.currency,
+          method: revision.method,
+          methodLabel: revision.methodLabel,
+          settledOn: revision.settledOn,
+          note: revision.note,
+          reversalReason: revision.reversalReason,
+          createdAt: revision.createdAt,
+          ledgerEntries: revision.ledgerEntries.map((entry) => ({
+            sequence: entry.sequence,
+            debtorId: entry.debtorId,
+            creditorId: entry.creditorId,
+            amountMinor: entry.amountMinor.toString(),
+            currency: entry.currency,
+          })),
+        })),
+      })),
+      comments: user.expenseComments.map((comment) => ({
+        id: comment.id,
+        expenseId: comment.expenseId,
+        body: comment.deletedAt ? null : comment.body,
+        version: comment.version,
+        createdAt: comment.createdAt,
+        updatedAt: comment.updatedAt,
+        deletedAt: comment.deletedAt,
+      })),
+      activity: user.activityAudience.map(({ event }) => ({
+        id: event.id,
+        type: event.type,
+        actorId: event.actorId,
+        entityType: event.entityType,
+        entityId: event.entityId,
+        groupId: event.groupId,
+        friendshipId: event.friendshipId,
+        payloadVersion: event.payloadVersion,
+        payload: event.payload,
+        occurredAt: event.occurredAt,
+      })),
+      auditEvents: user.auditEvents.map((event) => ({
+        id: event.id,
+        action: event.action,
+        outcome: event.outcome,
+        requestId: event.requestId,
+        createdAt: event.createdAt,
+      })),
     };
   }
 
-  async deactivate(principal: AuthenticatedPrincipal): Promise<void> {
+  async deactivate(
+    principal: AuthenticatedPrincipal,
+    requestId?: string,
+  ): Promise<void> {
     await this.prisma.withTransaction(async (database) => {
       await database.user.update({
         where: { id: principal.userId },
@@ -279,10 +405,21 @@ export class UsersService {
       await database.accountLifecycleEvent.create({
         data: { userId: principal.userId, type: "DEACTIVATED" },
       });
+      await this.audit.record(database, {
+        actorId: principal.userId,
+        sessionId: principal.sessionId,
+        action: auditActions.accountDeactivated,
+        targetType: "USER",
+        targetId: principal.userId,
+        ...(requestId ? { requestId } : {}),
+      });
     });
   }
 
-  async delete(principal: AuthenticatedPrincipal): Promise<void> {
+  async delete(
+    principal: AuthenticatedPrincipal,
+    requestId?: string,
+  ): Promise<void> {
     await this.requireRecentAuthentication(principal.sessionId);
     await this.prisma.withTransaction(async (database) => {
       const now = new Date();
@@ -348,6 +485,10 @@ export class UsersService {
         where: { userId: principal.userId, leftAt: null },
         data: { leftAt: now },
       });
+      await database.expenseComment.updateMany({
+        where: { authorId: principal.userId, deletedAt: null },
+        data: { body: null, deletedAt: now, version: { increment: 1 } },
+      });
       await database.authIdentity.deleteMany({
         where: { userId: principal.userId },
       });
@@ -371,6 +512,14 @@ export class UsersService {
       });
       await database.accountLifecycleEvent.create({
         data: { userId: principal.userId, type: "DELETED" },
+      });
+      await this.audit.record(database, {
+        actorId: principal.userId,
+        sessionId: principal.sessionId,
+        action: auditActions.accountDeleted,
+        targetType: "USER",
+        targetId: principal.userId,
+        ...(requestId ? { requestId } : {}),
       });
     });
   }

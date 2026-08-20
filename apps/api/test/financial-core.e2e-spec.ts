@@ -7,6 +7,7 @@ import { AppModule } from "../src/app.module";
 import { configureApplication } from "../src/application";
 import { GoogleOidcService } from "../src/auth/google-oidc.service";
 import { PrismaService } from "../src/database/prisma.service";
+import { deleteTraceRecords } from "./test-cleanup";
 
 interface TestSession {
   userId: string;
@@ -80,6 +81,42 @@ describe("financial core", () => {
       (value): value is string => Boolean(value),
     );
     if (userIds.length) {
+      await deleteTraceRecords(prisma, userIds);
+      await prisma.$executeRawUnsafe(
+        'ALTER TABLE "Settlement" DISABLE TRIGGER USER; ALTER TABLE "SettlementRevision" DISABLE TRIGGER USER; ALTER TABLE "LedgerEntry" DISABLE TRIGGER USER',
+      );
+      try {
+        const settlements = await prisma.settlement.findMany({
+          where: { creatorId: { in: userIds } },
+          select: { id: true },
+        });
+        const settlementIds = settlements.map((row) => row.id);
+        const revisions = await prisma.settlementRevision.findMany({
+          where: { settlementId: { in: settlementIds } },
+          select: { id: true },
+        });
+        const revisionIds = revisions.map((row) => row.id);
+        await prisma.settlementIdempotency.deleteMany({
+          where: { settlementId: { in: settlementIds } },
+        });
+        await prisma.settlement.updateMany({
+          where: { id: { in: settlementIds } },
+          data: { currentRevisionId: null },
+        });
+        await prisma.ledgerEntry.deleteMany({
+          where: { settlementRevisionId: { in: revisionIds } },
+        });
+        await prisma.settlementRevision.deleteMany({
+          where: { id: { in: revisionIds } },
+        });
+        await prisma.settlement.deleteMany({
+          where: { id: { in: settlementIds } },
+        });
+      } finally {
+        await prisma.$executeRawUnsafe(
+          'ALTER TABLE "LedgerEntry" ENABLE TRIGGER USER; ALTER TABLE "SettlementRevision" ENABLE TRIGGER USER; ALTER TABLE "Settlement" ENABLE TRIGGER USER',
+        );
+      }
       await prisma.$executeRawUnsafe(
         'ALTER TABLE "Expense" DISABLE TRIGGER USER',
       );
@@ -93,6 +130,9 @@ describe("financial core", () => {
           select: { id: true },
         });
         const expenseIds = expenses.map((row) => row.id);
+        await prisma.expenseComment.deleteMany({
+          where: { expenseId: { in: expenseIds } },
+        });
         const revisions = await prisma.expenseRevision.findMany({
           where: { expenseId: { in: expenseIds } },
           select: { id: true },
@@ -105,7 +145,7 @@ describe("financial core", () => {
           where: { expenseId: { in: expenseIds } },
         });
         await prisma.ledgerEntry.deleteMany({
-          where: { revisionId: { in: revisionIds } },
+          where: { expenseRevisionId: { in: revisionIds } },
         });
         await prisma.expensePayer.deleteMany({
           where: { revisionId: { in: revisionIds } },
@@ -276,7 +316,8 @@ describe("financial core", () => {
       prisma.$transaction(async (database) => {
         await database.ledgerEntry.create({
           data: {
-            revisionId: current.currentRevisionId!,
+            expenseRevisionId: current.currentRevisionId!,
+            sourceType: "EXPENSE_REVISION",
             sequence: 99,
             debtorId: second.userId,
             creditorId: first.userId,
@@ -378,6 +419,261 @@ describe("financial core", () => {
     expect(secondPage.body.totals).toEqual(firstPage.body.totals);
   });
 
+  it("records, reverses, and traces a settlement while emitting activity and supporting comments", async () => {
+    const before = await authenticated(
+      second,
+      "get",
+      "/api/v1/balances",
+    ).expect(200);
+    const owedBefore = before.body.totals.find(
+      (item: { currency: string }) => item.currency === "USD",
+    );
+    expect(owedBefore.netMinor).toBe("-10");
+    const input = {
+      fromUserId: second.userId,
+      toUserId: first.userId,
+      amountMinor: "4",
+      currency: "USD",
+      method: "BANK_TRANSFER",
+      settledOn: "2026-08-20",
+      note: "Manual transfer",
+    };
+    const created = await authenticated(second, "post", "/api/v1/settlements")
+      .set("Idempotency-Key", "partial-settlement")
+      .send(input)
+      .expect(201);
+    expect(created.body).toMatchObject({
+      amountMinor: "4",
+      status: "ACTIVE",
+      version: 1,
+    });
+    const replay = await authenticated(second, "post", "/api/v1/settlements")
+      .set("Idempotency-Key", "partial-settlement")
+      .send(input)
+      .expect(201);
+    expect(replay.body.id).toBe(created.body.id);
+    await authenticated(second, "post", "/api/v1/settlements")
+      .set("Idempotency-Key", "overpayment")
+      .send({ ...input, amountMinor: "7" })
+      .expect(400);
+    const after = await authenticated(second, "get", "/api/v1/balances").expect(
+      200,
+    );
+    expect(
+      after.body.totals.find(
+        (item: { currency: string }) => item.currency === "USD",
+      ).netMinor,
+    ).toBe("-6");
+    const breakdown = await authenticated(
+      second,
+      "get",
+      `/api/v1/balances/breakdown?friendshipId=${friendshipId}`,
+    ).expect(200);
+    expect(breakdown.body.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sourceType: "SETTLEMENT" }),
+      ]),
+    );
+    await authenticated(
+      second,
+      "post",
+      `/api/v1/settlements/${created.body.id as string}/corrections`,
+    )
+      .set("If-Match", '"1"')
+      .set("Idempotency-Key", "reverse-partial")
+      .send({ reason: "Entered for testing" })
+      .expect(200)
+      .expect((response) =>
+        expect(response.body).toMatchObject({ status: "REVERSED", version: 2 }),
+      );
+    const restored = await authenticated(
+      second,
+      "get",
+      "/api/v1/balances",
+    ).expect(200);
+    expect(
+      restored.body.totals.find(
+        (item: { currency: string }) => item.currency === "USD",
+      ).netMinor,
+    ).toBe("-10");
+
+    const incorrect = await authenticated(second, "post", "/api/v1/settlements")
+      .set("Idempotency-Key", "incorrect-settlement")
+      .send({ ...input, amountMinor: "3" })
+      .expect(201);
+    const replacement = await authenticated(
+      first,
+      "post",
+      `/api/v1/settlements/${incorrect.body.id as string}/corrections`,
+    )
+      .set("If-Match", '"1"')
+      .set("Idempotency-Key", "replace-incorrect")
+      .send({
+        reason: "Amount was wrong",
+        replacement: { ...input, amountMinor: "2" },
+      })
+      .expect(200);
+    expect(replacement.body).toMatchObject({
+      status: "ACTIVE",
+      replacesSettlementId: incorrect.body.id,
+      amountMinor: "2",
+    });
+    const original = await authenticated(
+      first,
+      "get",
+      `/api/v1/settlements/${incorrect.body.id as string}`,
+    ).expect(200);
+    expect(original.body.replacementSettlementId).toBe(replacement.body.id);
+    const replacementHistory = await authenticated(
+      first,
+      "get",
+      `/api/v1/settlements/${replacement.body.id as string}/revisions`,
+    ).expect(200);
+    expect(replacementHistory.body.items[0].action).toBe("REPLACED");
+    await authenticated(
+      second,
+      "post",
+      `/api/v1/settlements/${incorrect.body.id as string}/corrections`,
+    )
+      .set("If-Match", '"1"')
+      .set("Idempotency-Key", "stale-correction")
+      .send({ reason: "Stale request" })
+      .expect(412);
+
+    const concurrent = await Promise.all([
+      authenticated(second, "post", "/api/v1/settlements")
+        .set("Idempotency-Key", "concurrent-settlement-a")
+        .send({ ...input, amountMinor: "6" }),
+      authenticated(second, "post", "/api/v1/settlements")
+        .set("Idempotency-Key", "concurrent-settlement-b")
+        .send({ ...input, amountMinor: "6" }),
+    ]);
+    expect(concurrent.map((response) => response.status).sort()).toEqual([
+      201, 400,
+    ]);
+    const concurrentBalance = await authenticated(
+      second,
+      "get",
+      "/api/v1/balances",
+    ).expect(200);
+    expect(
+      concurrentBalance.body.totals.find(
+        (item: { currency: string }) => item.currency === "USD",
+      ).netMinor,
+    ).toBe("-2");
+    await authenticated(second, "post", "/api/v1/settlements")
+      .set("Idempotency-Key", "full-final-settlement")
+      .send({ ...input, amountMinor: "2" })
+      .expect(201);
+    const fullySettled = await authenticated(
+      second,
+      "get",
+      "/api/v1/balances",
+    ).expect(200);
+    expect(
+      fullySettled.body.totals.some(
+        (item: { currency: string }) => item.currency === "USD",
+      ),
+    ).toBe(false);
+
+    const expense = await prisma.expense.findFirstOrThrow({
+      where: { creatorId: first.userId, status: "ACTIVE", friendshipId },
+    });
+    const comment = await authenticated(
+      first,
+      "post",
+      `/api/v1/expenses/${expense.id}/comments`,
+    )
+      .send({ body: "Looks correct" })
+      .expect(201);
+    await authenticated(
+      second,
+      "patch",
+      `/api/v1/expenses/${expense.id}/comments/${comment.body.id as string}`,
+    )
+      .set("If-Match", "1")
+      .send({ body: "Cannot edit" })
+      .expect(404);
+    await authenticated(
+      first,
+      "delete",
+      `/api/v1/expenses/${expense.id}/comments/${comment.body.id as string}`,
+    )
+      .set("If-Match", "1")
+      .expect(200)
+      .expect((response) => expect(response.body.body).toBeNull());
+
+    const activity = await authenticated(
+      first,
+      "get",
+      "/api/v1/activities",
+    ).expect(200);
+    expect(
+      activity.body.items.map((item: { type: string }) => item.type),
+    ).toEqual(
+      expect.arrayContaining([
+        "SETTLEMENT_CREATED",
+        "SETTLEMENT_REVERSED",
+        "SETTLEMENT_REPLACED",
+        "COMMENT_CREATED",
+        "COMMENT_DELETED",
+      ]),
+    );
+    expect(JSON.stringify(activity.body.items)).not.toContain(
+      "Manual transfer",
+    );
+    expect(JSON.stringify(activity.body.items)).not.toContain("Looks correct");
+    expect(
+      activity.body.items.filter(
+        (item: { type: string; entityId: string }) =>
+          item.type === "SETTLEMENT_CREATED" &&
+          item.entityId === created.body.id,
+      ),
+    ).toHaveLength(1);
+    const eventId = activity.body.items[0].id as string;
+    await expect(
+      prisma.activityEvent.update({
+        where: { id: eventId },
+        data: { type: "TAMPERED" },
+      }),
+    ).rejects.toThrow();
+    const audience = await prisma.activityAudience.findFirstOrThrow({
+      where: { eventId },
+    });
+    await expect(
+      prisma.activityAudience.update({
+        where: { id: audience.id },
+        data: { createdAt: new Date() },
+      }),
+    ).rejects.toThrow();
+    const security = await authenticated(
+      first,
+      "get",
+      "/api/v1/users/me/security-events",
+    ).expect(200);
+    expect(security.body.items).toEqual(expect.any(Array));
+    const otherSecurity = await authenticated(
+      second,
+      "get",
+      "/api/v1/users/me/security-events",
+    ).expect(200);
+    const otherIds = new Set(
+      otherSecurity.body.items.map((item: { id: string }) => item.id),
+    );
+    expect(
+      security.body.items.some((item: { id: string }) => otherIds.has(item.id)),
+    ).toBe(false);
+    const audit = await prisma.auditEvent.findFirstOrThrow({
+      where: { actorId: first.userId },
+    });
+    await expect(
+      prisma.auditEvent.update({
+        where: { id: audit.id },
+        data: { outcome: "DENIED" },
+      }),
+    ).rejects.toThrow();
+  });
+
   it("validates every split mode, malformed cursors, and publishes financial paths", async () => {
     const base = {
       friendshipId,
@@ -421,6 +717,21 @@ describe("financial core", () => {
     await authenticated(
       first,
       "get",
+      "/api/v1/settlements?cursor=invalid",
+    ).expect(400);
+    await authenticated(
+      first,
+      "get",
+      "/api/v1/activities?cursor=invalid",
+    ).expect(400);
+    await authenticated(
+      first,
+      "get",
+      "/api/v1/users/me/security-events?cursor=invalid",
+    ).expect(400);
+    await authenticated(
+      first,
+      "get",
       "/api/v1/expenses?dateFrom=2026-02-30",
     ).expect(400);
     const malformedBreakdownCursor = Buffer.from(
@@ -442,6 +753,17 @@ describe("financial core", () => {
     expect(openapi.body.paths).toHaveProperty(
       "/api/v1/balances/groups/{groupId}",
     );
+    expect(openapi.body.paths).toHaveProperty("/api/v1/settlements");
+    expect(openapi.body.paths).toHaveProperty("/api/v1/activities");
+    expect(openapi.body.paths).toHaveProperty(
+      "/api/v1/groups/{groupId}/activities",
+    );
+    expect(openapi.body.paths).toHaveProperty(
+      "/api/v1/expenses/{expenseId}/comments",
+    );
+    expect(openapi.body.paths).toHaveProperty(
+      "/api/v1/users/me/security-events",
+    );
     expect(
       openapi.body.components.schemas.ExpenseInputDto.properties.payers.items
         .$ref,
@@ -456,6 +778,10 @@ describe("financial core", () => {
         "application/json"
       ].schema.$ref,
     ).toContain("OverallBalancesResponseDto");
+    expect(
+      openapi.body.components.schemas.BalanceBreakdownPageResponseDto.properties
+        .items.items.discriminator.propertyName,
+    ).toBe("sourceType");
   });
 
   async function signIn(profile: keyof typeof profiles): Promise<TestSession> {

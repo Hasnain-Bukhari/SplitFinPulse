@@ -16,6 +16,7 @@ import { ApiCookieAuth, ApiQuery, ApiTags } from "@nestjs/swagger";
 import type { Request, Response } from "express";
 import type { Environment } from "../config/environment";
 import { ApiException } from "../http/api.exception";
+import type { RequestWithId } from "../http/request-id.middleware";
 import { Public, SkipCsrf } from "../http/public.decorator";
 import { AuthService } from "./auth.service";
 import type { ApplicationTokens, AuthenticatedPrincipal } from "./auth.types";
@@ -57,6 +58,7 @@ export class AuthController {
         code,
         state,
         request.headers["user-agent"],
+        (request as RequestWithId).requestId,
       );
       this.setCookies(response, result.tokens);
       const destination = new URL(
@@ -99,7 +101,10 @@ export class AuthController {
         "Your session has expired",
       );
     }
-    const result = await this.auth.refresh(refreshToken);
+    const result = await this.auth.refresh(
+      refreshToken,
+      (request as RequestWithId).requestId,
+    );
     this.setCookies(response, result.tokens);
     response.status(HttpStatus.OK).json(result.envelope);
   }
@@ -109,9 +114,10 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async logout(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
+    @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
-    await this.auth.logout(principal);
+    await this.auth.logout(principal, (request as RequestWithId).requestId);
     this.clearCookies(response);
   }
 
@@ -127,9 +133,14 @@ export class AuthController {
   async revoke(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
     @Param("sessionId") sessionId: string,
+    @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
-    await this.auth.revoke(principal, sessionId);
+    await this.auth.revoke(
+      principal,
+      sessionId,
+      (request as RequestWithId).requestId,
+    );
     if (sessionId === principal.sessionId) this.clearCookies(response);
   }
 
@@ -138,9 +149,10 @@ export class AuthController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async revokeAll(
     @CurrentPrincipal() principal: AuthenticatedPrincipal,
+    @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
-    await this.auth.revokeAll(principal);
+    await this.auth.revokeAll(principal, (request as RequestWithId).requestId);
     this.clearCookies(response);
   }
 

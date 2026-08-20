@@ -181,4 +181,60 @@ describe("API client", () => {
       headers: expect.objectContaining({ "If-Match": "7" }),
     });
   });
+
+  it("uses the settlement correction and comment concurrency contracts", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ id: "record-1", version: 2 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    document.cookie = "sfp_csrf=epic-eight-csrf; path=/";
+    const settlement = {
+      fromUserId: "user-1",
+      toUserId: "user-2",
+      amountMinor: "1250",
+      currency: "USD",
+      method: "CARD" as const,
+      settledOn: "2026-08-20",
+    };
+
+    await api.createSettlement(settlement, "settlement-create-1");
+    await api.correctSettlement(
+      "settlement/1",
+      4,
+      "Wrong method",
+      settlement,
+      "settlement-correct-1",
+    );
+    await api.deleteExpenseComment("expense/1", "comment/1", 3);
+
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      method: "POST",
+      headers: expect.objectContaining({
+        "Idempotency-Key": "settlement-create-1",
+        "X-CSRF-Token": "epic-eight-csrf",
+      }),
+    });
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(
+      "http://localhost:3000/api/v1/settlements/settlement%2F1/corrections",
+    );
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({
+      headers: expect.objectContaining({
+        "If-Match": '"4"',
+        "Idempotency-Key": "settlement-correct-1",
+      }),
+      body: JSON.stringify({ reason: "Wrong method", replacement: settlement }),
+    });
+    expect(fetchMock.mock.calls[2]?.[0]).toBe(
+      "http://localhost:3000/api/v1/expenses/expense%2F1/comments/comment%2F1",
+    );
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({
+      method: "DELETE",
+      headers: expect.objectContaining({ "If-Match": "3" }),
+    });
+  });
 });

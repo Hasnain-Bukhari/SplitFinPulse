@@ -36,39 +36,59 @@ const items = computed(
       class="text-muted-foreground text-sm"
       role="status"
     >
-      Loading source expenses…
+      Loading balance history…
     </p>
     <p v-else-if="result.isError.value" class="form-error" role="alert">
-      Source expenses could not be loaded.
+      Balance history could not be loaded.
     </p>
     <p v-else-if="!items.length" class="text-muted-foreground text-sm">
-      No source expenses.
+      No balance history.
     </p>
     <ul v-else class="divide-y">
       <li
         v-for="item in items"
-        :key="`${item.expense.id}:${item.counterparty.id}:${item.direction}`"
+        :key="`${item.sourceType}:${item.sourceType === 'EXPENSE' ? item.expense.id : item.settlement.id}:${item.counterparty.id}:${item.direction}`"
         class="py-3"
       >
         <RouterLink
-          :to="`/expenses/${item.expense.id}`"
+          :to="
+            item.sourceType === 'EXPENSE'
+              ? `/expenses/${item.expense.id}`
+              : `/settlements/${item.settlement.id}`
+          "
           class="focus-visible:ring-ring flex justify-between gap-3 rounded focus-visible:ring-2 focus-visible:outline-none"
         >
           <span
             ><strong class="block text-sm">{{
-              item.expense.description
+              item.sourceType === "EXPENSE"
+                ? item.expense.description
+                : "Payment recorded"
             }}</strong
             ><small class="text-muted-foreground"
-              >{{ item.expense.expenseDate }} ·
+              >{{
+                item.sourceType === "EXPENSE"
+                  ? item.expense.expenseDate
+                  : item.settlement.settledOn
+              }}
+              ·
               {{
-                item.direction === "OWE"
-                  ? `You owe ${item.counterparty.name}`
-                  : `${item.counterparty.name} owes you`
+                item.sourceType === "SETTLEMENT"
+                  ? item.direction === "OWED"
+                    ? `Reduced what you owe ${item.counterparty.name}`
+                    : `Reduced what ${item.counterparty.name} owes you`
+                  : item.direction === "OWE"
+                    ? `You owe ${item.counterparty.name}`
+                    : `${item.counterparty.name} owes you`
               }}</small
             ></span
           >
           <strong class="tabular-nums text-sm">{{
-            formatCurrency(item.amountMinor, item.expense.currency)
+            formatCurrency(
+              item.amountMinor,
+              item.sourceType === "EXPENSE"
+                ? item.expense.currency
+                : item.settlement.currency,
+            )
           }}</strong>
         </RouterLink>
       </li>

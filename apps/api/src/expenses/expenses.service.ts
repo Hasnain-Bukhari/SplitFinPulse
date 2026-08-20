@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
+import {
+  ActivitiesService,
+  activityTypes,
+} from "../activities/activities.service";
+import { AuditService, auditActions } from "../audit/audit.service";
 import { Prisma } from "../generated/prisma/client";
 import { PrismaService } from "../database/prisma.service";
 import { isSupportedCurrencyCode } from "../currencies/currency-codes";
@@ -43,6 +48,8 @@ export class ExpensesService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(ExpenseAccessService) private readonly access: ExpenseAccessService,
+    @Inject(ActivitiesService) private readonly activities: ActivitiesService,
+    @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
   async preview(userId: string, input: ExpenseInputDto) {
@@ -126,6 +133,28 @@ export class ExpensesService {
             requestHash: hash,
             expenseId: expense.id,
           },
+        });
+        await this.activities.record(database, {
+          type: activityTypes.expenseCreated,
+          actorId: userId,
+          entityType: "EXPENSE",
+          entityId: expense.id,
+          ...(expense.groupId ? { groupId: expense.groupId } : {}),
+          ...(expense.friendshipId
+            ? { friendshipId: expense.friendshipId }
+            : {}),
+          audienceUserIds: context.userIds,
+          payload: {
+            description: input.description.trim(),
+            amountMinor: input.totalMinor,
+            currency: input.currency,
+          },
+        });
+        await this.audit.record(database, {
+          actorId: userId,
+          action: auditActions.expenseCreated,
+          targetType: "EXPENSE",
+          targetId: expense.id,
         });
         return expense.id;
       });
@@ -368,6 +397,26 @@ export class ExpensesService {
         data: { version: { increment: 1 }, currentRevisionId: revision.id },
       });
       if (changed.count !== 1) throw staleVersion();
+      await this.activities.record(database, {
+        type: activityTypes.expenseUpdated,
+        actorId: userId,
+        entityType: "EXPENSE",
+        entityId: expense.id,
+        ...(expense.groupId ? { groupId: expense.groupId } : {}),
+        ...(expense.friendshipId ? { friendshipId: expense.friendshipId } : {}),
+        audienceUserIds: context.userIds,
+        payload: {
+          description: input.description.trim(),
+          amountMinor: input.totalMinor,
+          currency: input.currency,
+        },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.expenseUpdated,
+        targetType: "EXPENSE",
+        targetId: expense.id,
+      });
     });
     return this.detail(userId, expenseId);
   }
@@ -390,6 +439,12 @@ export class ExpensesService {
         include: revisionInclude,
       });
       if (!source) throw expenseNotFound();
+      const context = await this.access.requireContext(
+        database,
+        userId,
+        expense.groupId ?? undefined,
+        expense.friendshipId ?? undefined,
+      );
       const input = this.inputFromRevision(expense, source);
       const prepared = {
         totalMinor: source.totalMinor,
@@ -417,6 +472,26 @@ export class ExpensesService {
         },
       });
       if (changed.count !== 1) throw staleVersion();
+      await this.activities.record(database, {
+        type: activityTypes.expenseDeleted,
+        actorId: userId,
+        entityType: "EXPENSE",
+        entityId: expense.id,
+        ...(expense.groupId ? { groupId: expense.groupId } : {}),
+        ...(expense.friendshipId ? { friendshipId: expense.friendshipId } : {}),
+        audienceUserIds: context.userIds,
+        payload: {
+          description: source.description,
+          amountMinor: source.totalMinor.toString(),
+          currency: source.currency,
+        },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.expenseDeleted,
+        targetType: "EXPENSE",
+        targetId: expense.id,
+      });
     });
     return this.detail(userId, expenseId);
   }
@@ -483,6 +558,26 @@ export class ExpensesService {
         },
       });
       if (changed.count !== 1) throw staleVersion();
+      await this.activities.record(database, {
+        type: activityTypes.expenseRestored,
+        actorId: userId,
+        entityType: "EXPENSE",
+        entityId: expense.id,
+        ...(expense.groupId ? { groupId: expense.groupId } : {}),
+        ...(expense.friendshipId ? { friendshipId: expense.friendshipId } : {}),
+        audienceUserIds: context.userIds,
+        payload: {
+          description: source.description,
+          amountMinor: source.totalMinor.toString(),
+          currency: source.currency,
+        },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.expenseRestored,
+        targetType: "EXPENSE",
+        targetId: expense.id,
+      });
     });
     return this.detail(userId, expenseId);
   }
@@ -584,6 +679,7 @@ export class ExpensesService {
               ledgerEntries: {
                 create: prepared.ledger.map((row) => ({
                   ...row,
+                  sourceType: "EXPENSE_REVISION" as const,
                   currency: input.currency,
                 })),
               },

@@ -4,7 +4,6 @@ import {
   ArrowDownLeft,
   ArrowUpRight,
   Plus,
-  ReceiptText,
   Sparkles,
   UsersRound,
   WalletCards,
@@ -14,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { computed } from "vue";
 import { api } from "@/lib/api/client";
 import { useCurrencyFormatter } from "@/features/expenses/useCurrencyFormatter";
+import ActivityFeed from "@/features/activity/ActivityFeed.vue";
 
 const balances = useQuery({
   queryKey: ["balances", "overall"],
@@ -91,6 +91,13 @@ const summaryCards = computed(() => {
               <UsersRound :size="17" aria-hidden="true" /> Create a group
             </RouterLink>
           </Button>
+          <Button
+            v-if="balances.data.value?.contexts.length"
+            as-child
+            variant="outline"
+          >
+            <RouterLink to="/settlements/new">Settle up</RouterLink>
+          </Button>
         </div>
       </div>
       <div class="pulse-orbit" aria-hidden="true"><span /><span /><span /></div>
@@ -129,25 +136,18 @@ const summaryCards = computed(() => {
             <p class="section-kicker">Timeline</p>
             <h2>Recent activity</h2>
           </div>
+          <RouterLink class="data-note" to="/activity">View all</RouterLink>
         </div>
-        <div class="empty-state">
-          <span class="empty-state-icon"
-            ><ReceiptText :size="24" aria-hidden="true"
-          /></span>
-          <h3>Your story starts here</h3>
-          <p>
-            Expenses, settlements, and changes will form an auditable timeline.
-          </p>
-        </div>
+        <ActivityFeed :limit="4" />
       </Card>
 
       <Card class="insight-card min-h-72 p-5 sm:p-6">
         <div>
-          <p class="section-kicker section-kicker--light">Coming next</p>
-          <h2>A trustworthy foundation</h2>
+          <p class="section-kicker section-kicker--light">Built for clarity</p>
+          <h2>Traceable by design</h2>
           <p>
-            Secure identity comes first, then every account, split, and
-            settlement stays attached to the right person.
+            Every expense, payment, correction, and discussion stays attached to
+            an explainable history.
           </p>
         </div>
         <div class="insight-lines" aria-hidden="true">

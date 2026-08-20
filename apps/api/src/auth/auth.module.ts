@@ -8,9 +8,10 @@ import { CsrfGuard } from "./csrf.guard";
 import { GoogleOidcService } from "./google-oidc.service";
 import { TokenService } from "./token.service";
 import { PrincipalThrottlerGuard } from "./principal-throttler.guard";
+import { AuditModule } from "../audit/audit.module";
 
 @Module({
-  imports: [JwtModule.register({})],
+  imports: [JwtModule.register({}), AuditModule],
   controllers: [AuthController],
   providers: [
     AuthService,

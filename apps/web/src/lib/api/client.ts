@@ -343,15 +343,171 @@ export interface FriendBalances {
   amounts: BalanceAmount[];
 }
 
-export interface BalanceBreakdownItem {
-  expense: ExpenseSummary;
+interface BalanceBreakdownItemBase {
   amountMinor: string;
   direction: "OWE" | "OWED";
   counterparty: FriendUserSummary;
 }
 
+export type BalanceBreakdownItem = BalanceBreakdownItemBase &
+  (
+    | {
+        sourceType: "EXPENSE";
+        expense: ExpenseSummary;
+      }
+    | {
+        sourceType: "SETTLEMENT";
+        settlement: {
+          id: string;
+          amountMinor: string;
+          currency: string;
+          settledOn: string;
+          status: SettlementStatus;
+          groupId: string | null;
+          friendshipId: string | null;
+        };
+      }
+  );
+
 export interface BalanceBreakdownPage {
   items: BalanceBreakdownItem[];
+  nextCursor: string | null;
+}
+
+export type SettlementMethod = "CASH" | "BANK_TRANSFER" | "CARD" | "OTHER";
+export type SettlementStatus = "ACTIVE" | "REVERSED";
+
+export interface SettlementWriteInput {
+  groupId?: string;
+  fromUserId: string;
+  toUserId: string;
+  amountMinor: string;
+  currency: string;
+  method: SettlementMethod;
+  methodLabel?: string;
+  settledOn: string;
+  note?: string;
+}
+
+export interface SettlementPermissions {
+  canReverse: boolean;
+  canCorrect: boolean;
+}
+
+export interface SettlementSummary {
+  id: string;
+  groupId: string | null;
+  friendshipId: string | null;
+  from: FriendUserSummary;
+  to: FriendUserSummary;
+  amountMinor: string;
+  currency: string;
+  method: SettlementMethod;
+  methodLabel: string | null;
+  settledOn: string;
+  note: string | null;
+  status: SettlementStatus;
+  actor: FriendUserSummary;
+  version: number;
+  reversalReason: string | null;
+  replacesSettlementId: string | null;
+  replacementSettlementId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SettlementDetail extends SettlementSummary {
+  permissions: SettlementPermissions;
+}
+
+export interface SettlementRevision extends SettlementDetail {
+  action: "CREATED" | "REPLACED" | "REVERSED";
+  revisionNumber: number;
+}
+
+export interface SettlementRevisionPage {
+  items: SettlementRevision[];
+  nextCursor: string | null;
+}
+
+export interface SettlementPage {
+  items: SettlementSummary[];
+  nextCursor: string | null;
+}
+
+export interface SettlementListFilters {
+  cursor?: string;
+  groupId?: string;
+  friendshipId?: string;
+}
+
+export type ActivityEventType =
+  | "EXPENSE_CREATED"
+  | "EXPENSE_UPDATED"
+  | "EXPENSE_DELETED"
+  | "EXPENSE_RESTORED"
+  | "GROUP_CREATED"
+  | "GROUP_UPDATED"
+  | "GROUP_ARCHIVED"
+  | "GROUP_RESTORED"
+  | "GROUP_MEMBER_ADDED"
+  | "GROUP_MEMBER_ROLE_UPDATED"
+  | "GROUP_MEMBER_REMOVED"
+  | "GROUP_MEMBER_LEFT"
+  | "GROUP_OWNERSHIP_TRANSFERRED"
+  | "SETTLEMENT_CREATED"
+  | "SETTLEMENT_REVERSED"
+  | "SETTLEMENT_REPLACED"
+  | "COMMENT_CREATED"
+  | "COMMENT_UPDATED"
+  | "COMMENT_DELETED";
+
+export interface ActivityEvent {
+  id: string;
+  type: ActivityEventType | string;
+  actor: FriendUserSummary | null;
+  entityType:
+    "EXPENSE" | "GROUP" | "GROUP_MEMBER" | "SETTLEMENT" | "COMMENT" | string;
+  entityId: string;
+  occurredAt: string;
+  groupId: string | null;
+  friendshipId: string | null;
+  payloadVersion: number;
+  payload: Record<string, unknown>;
+}
+
+export interface ActivityPage {
+  items: ActivityEvent[];
+  nextCursor: string | null;
+}
+
+export interface ExpenseComment {
+  id: string;
+  expenseId: string;
+  author: FriendUserSummary;
+  body: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  permissions: { canEdit: boolean; canDelete: boolean };
+}
+
+export interface ExpenseCommentPage {
+  items: ExpenseComment[];
+  nextCursor: string | null;
+}
+
+export interface SecurityAuditEvent {
+  id: string;
+  action: string;
+  outcome: string;
+  requestId: string | null;
+  createdAt: string;
+}
+
+export interface SecurityAuditPage {
+  items: SecurityAuditEvent[];
   nextCursor: string | null;
 }
 
@@ -697,6 +853,101 @@ export const api = {
     const suffix = query.size ? `?${query}` : "";
     return request(`/api/v1/balances/breakdown${suffix}`);
   },
+  settlements: (
+    filters: SettlementListFilters = {},
+  ): Promise<SettlementPage> => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value) query.set(key, value);
+    }
+    const suffix = query.size ? `?${query}` : "";
+    return request(`/api/v1/settlements${suffix}`);
+  },
+  settlement: (id: string): Promise<SettlementDetail> =>
+    request(`/api/v1/settlements/${encodeURIComponent(id)}`),
+  createSettlement: (
+    input: SettlementWriteInput,
+    idempotencyKey: string,
+  ): Promise<SettlementDetail> =>
+    request("/api/v1/settlements", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(input),
+    }),
+  correctSettlement: (
+    id: string,
+    version: number,
+    reason: string,
+    replacement: SettlementWriteInput | undefined,
+    idempotencyKey: string,
+  ): Promise<SettlementDetail> =>
+    request(`/api/v1/settlements/${encodeURIComponent(id)}/corrections`, {
+      method: "POST",
+      headers: {
+        "Idempotency-Key": idempotencyKey,
+        "If-Match": `"${version}"`,
+      },
+      body: JSON.stringify({ reason, ...(replacement ? { replacement } : {}) }),
+    }),
+  settlementRevisions: (
+    id: string,
+    cursor?: string,
+  ): Promise<SettlementRevisionPage> =>
+    request(
+      `/api/v1/settlements/${encodeURIComponent(id)}/revisions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
+  activities: (cursor?: string): Promise<ActivityPage> => {
+    const query = new URLSearchParams();
+    if (cursor) query.set("cursor", cursor);
+    const suffix = query.size ? `?${query}` : "";
+    return request(`/api/v1/activities${suffix}`);
+  },
+  groupActivities: (groupId: string, cursor?: string): Promise<ActivityPage> =>
+    request(
+      `/api/v1/groups/${encodeURIComponent(groupId)}/activities${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
+  expenseComments: (
+    expenseId: string,
+    cursor?: string,
+  ): Promise<ExpenseCommentPage> =>
+    request(
+      `/api/v1/expenses/${encodeURIComponent(expenseId)}/comments${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
+  createExpenseComment: (
+    expenseId: string,
+    body: string,
+  ): Promise<ExpenseComment> =>
+    request(`/api/v1/expenses/${encodeURIComponent(expenseId)}/comments`, {
+      method: "POST",
+      body: JSON.stringify({ body }),
+    }),
+  updateExpenseComment: (
+    expenseId: string,
+    commentId: string,
+    body: string,
+    version: number,
+  ): Promise<ExpenseComment> =>
+    request(
+      `/api/v1/expenses/${encodeURIComponent(expenseId)}/comments/${encodeURIComponent(commentId)}`,
+      {
+        method: "PATCH",
+        headers: { "If-Match": String(version) },
+        body: JSON.stringify({ body }),
+      },
+    ),
+  deleteExpenseComment: (
+    expenseId: string,
+    commentId: string,
+    version: number,
+  ): Promise<ExpenseComment> =>
+    request(
+      `/api/v1/expenses/${encodeURIComponent(expenseId)}/comments/${encodeURIComponent(commentId)}`,
+      { method: "DELETE", headers: { "If-Match": String(version) } },
+    ),
+  securityAudit: (cursor?: string): Promise<SecurityAuditPage> =>
+    request(
+      `/api/v1/users/me/security-events${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
   googleLoginUrl: (returnTo = "/"): string =>
     `${apiBaseUrl}/api/v1/auth/google/start?returnTo=${encodeURIComponent(returnTo)}`,
 };

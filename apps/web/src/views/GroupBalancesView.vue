@@ -5,8 +5,10 @@ import { useRoute } from "vue-router";
 import { Card } from "@/components/ui/card";
 import BalanceAmounts from "@/features/balances/BalanceAmounts.vue";
 import BalanceBreakdown from "@/features/balances/BalanceBreakdown.vue";
+import SettlementHistory from "@/features/settlements/SettlementHistory.vue";
 import { useCurrencyFormatter } from "@/features/expenses/useCurrencyFormatter";
 import { api } from "@/lib/api/client";
+import { sessionQueryOptions } from "@/lib/query-client";
 
 const route = useRoute();
 const groupId = computed(() => String(route.params.groupId));
@@ -18,6 +20,7 @@ const balances = useQuery(
     queryFn: () => api.groupBalances(groupId.value),
   })),
 );
+const session = useQuery(sessionQueryOptions);
 const transfers = computed(() => {
   const data = balances.data.value;
   if (!data) return [];
@@ -103,21 +106,37 @@ const transfers = computed(() => {
             <li
               v-for="(item, index) in transfers"
               :key="`${item.from.id}:${item.to.id}:${index}`"
-              class="py-2 text-sm"
+              class="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
             >
-              <strong>{{ item.from.name }}</strong> pays
-              <strong>{{ item.to.name }}</strong>
-              <span class="tabular-nums">{{
-                formatCurrency(item.amountMinor, item.currency)
-              }}</span>
+              <span
+                ><strong>{{ item.from.name }}</strong> pays
+                <strong>{{ item.to.name }}</strong>
+                <span class="tabular-nums">{{
+                  formatCurrency(item.amountMinor, item.currency)
+                }}</span></span
+              >
+              <RouterLink
+                v-if="
+                  item.from.id === session.data.value?.user.id ||
+                  item.to.id === session.data.value?.user.id
+                "
+                class="text-primary rounded text-xs font-semibold focus-visible:ring-2"
+                :to="`/settlements/new?groupId=${groupId}`"
+                >Settle up</RouterLink
+              >
             </li>
           </ul>
         </Card>
       </div>
       <Card class="p-5"
         ><p class="section-kicker">Traceability</p>
-        <h2 class="mb-3 font-bold">Source expenses</h2>
+        <h2 class="mb-3 font-bold">Balance history</h2>
         <BalanceBreakdown :filters="{ groupId }"
+      /></Card>
+      <Card class="p-5"
+        ><p class="section-kicker">Payments</p>
+        <h2 class="mb-3 font-bold">Settlement history</h2>
+        <SettlementHistory :group-id="groupId"
       /></Card>
     </template>
   </div>

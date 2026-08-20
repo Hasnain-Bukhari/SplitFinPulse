@@ -18,7 +18,15 @@ type Entry = {
     };
     description: string;
     expenseDate: Date;
-  };
+  } | null;
+  settlementRevision: {
+    settlement: {
+      id: string;
+      groupId: string | null;
+      friendshipId: string | null;
+    };
+    settledOn: Date;
+  } | null;
 };
 
 @Injectable()
@@ -27,7 +35,7 @@ export class BalancesService {
 
   async overall(userId: string, cursor: string | undefined, limit: number) {
     const offset = cursor ? this.decodeOffsetCursor(cursor) : 0;
-    const pageLimit = Number(limit);
+    const pageLimit = Number(limit ?? 50);
     type TotalRow = {
       currency: string;
       youOweMinor: bigint;
@@ -43,16 +51,34 @@ export class BalancesService {
     };
     const [totalRows, contextRows] = await Promise.all([
       this.prisma.$queryRaw<TotalRow[]>`
-        SELECT le."currency",
-          SUM(CASE WHEN le."debtorId" = CAST(${userId} AS uuid) THEN le."amountMinor" ELSE 0 END) AS "youOweMinor",
-          SUM(CASE WHEN le."creditorId" = CAST(${userId} AS uuid) THEN le."amountMinor" ELSE 0 END) AS "youAreOwedMinor",
-          SUM(CASE WHEN le."creditorId" = CAST(${userId} AS uuid) THEN le."amountMinor" ELSE -le."amountMinor" END) AS "netMinor"
-        FROM "LedgerEntry" le
-        JOIN "ExpenseRevision" revision ON revision."id" = le."revisionId"
-        JOIN "Expense" expense ON expense."currentRevisionId" = revision."id" AND expense."status" = 'ACTIVE'
-        WHERE le."debtorId" = CAST(${userId} AS uuid) OR le."creditorId" = CAST(${userId} AS uuid)
-        GROUP BY le."currency"
-        ORDER BY le."currency"
+        WITH current_entries AS (
+          SELECT le."currency", le."debtorId", le."creditorId", le."amountMinor",
+            COALESCE(expense."groupId", expense."friendshipId") AS context_id
+          FROM "LedgerEntry" le
+          JOIN "ExpenseRevision" revision ON revision."id" = le."revisionId"
+          JOIN "Expense" expense ON expense."currentRevisionId" = revision."id" AND expense."status" = 'ACTIVE'
+          UNION ALL
+          SELECT le."currency", le."debtorId", le."creditorId", le."amountMinor",
+            COALESCE(settlement."groupId", settlement."friendshipId") AS context_id
+          FROM "LedgerEntry" le
+          JOIN "SettlementRevision" revision ON revision."id" = le."settlementRevisionId"
+          JOIN "Settlement" settlement ON settlement."currentRevisionId" = revision."id" AND settlement."status" = 'ACTIVE'
+        ), pair_net AS (
+          SELECT context_id, "currency",
+            CASE WHEN "debtorId" = CAST(${userId} AS uuid) THEN "creditorId" ELSE "debtorId" END AS counterparty_id,
+            SUM(CASE WHEN "creditorId" = CAST(${userId} AS uuid) THEN "amountMinor" ELSE -"amountMinor" END) AS net
+          FROM current_entries
+          WHERE "debtorId" = CAST(${userId} AS uuid) OR "creditorId" = CAST(${userId} AS uuid)
+          GROUP BY context_id, "currency", counterparty_id
+        )
+        SELECT "currency",
+          SUM(CASE WHEN net < 0 THEN -net ELSE 0 END) AS "youOweMinor",
+          SUM(CASE WHEN net > 0 THEN net ELSE 0 END) AS "youAreOwedMinor",
+          SUM(net) AS "netMinor"
+        FROM pair_net
+        WHERE net <> 0
+        GROUP BY "currency"
+        ORDER BY "currency"
       `,
       this.prisma.$queryRaw<ContextRow[]>`
         WITH current_entries AS (
@@ -63,8 +89,22 @@ export class BalancesService {
           JOIN "ExpenseRevision" revision ON revision."id" = le."revisionId"
           JOIN "Expense" expense ON expense."currentRevisionId" = revision."id" AND expense."status" = 'ACTIVE'
           WHERE le."debtorId" = CAST(${userId} AS uuid) OR le."creditorId" = CAST(${userId} AS uuid)
+          UNION ALL
+          SELECT le."currency", le."debtorId", le."creditorId", le."amountMinor",
+            CASE WHEN settlement."groupId" IS NOT NULL THEN 'GROUP' ELSE 'FRIENDSHIP' END AS context_type,
+            COALESCE(settlement."groupId", settlement."friendshipId") AS context_id
+          FROM "LedgerEntry" le
+          JOIN "SettlementRevision" revision ON revision."id" = le."settlementRevisionId"
+          JOIN "Settlement" settlement ON settlement."currentRevisionId" = revision."id" AND settlement."status" = 'ACTIVE'
+          WHERE le."debtorId" = CAST(${userId} AS uuid) OR le."creditorId" = CAST(${userId} AS uuid)
+        ), pair_net AS (
+          SELECT context_type, context_id, "currency",
+            CASE WHEN "debtorId" = CAST(${userId} AS uuid) THEN "creditorId" ELSE "debtorId" END AS counterparty_id,
+            SUM(CASE WHEN "creditorId" = CAST(${userId} AS uuid) THEN "amountMinor" ELSE -"amountMinor" END) AS net
+          FROM current_entries
+          GROUP BY context_type, context_id, "currency", counterparty_id
         ), contexts AS (
-          SELECT DISTINCT context_type, context_id FROM current_entries
+          SELECT DISTINCT context_type, context_id FROM pair_net WHERE net <> 0
         ), numbered AS (
           SELECT context_type, context_id,
             ROW_NUMBER() OVER (ORDER BY context_type, context_id) AS rank,
@@ -77,12 +117,12 @@ export class BalancesService {
         SELECT selected.context_type AS "contextType", selected.context_id AS "contextId",
           COALESCE(group_row."name", CASE WHEN friendship."firstUserId" = CAST(${userId} AS uuid) THEN second_user."name" ELSE first_user."name" END, 'Unknown') AS "name",
           entries."currency",
-          SUM(CASE WHEN entries."debtorId" = CAST(${userId} AS uuid) THEN entries."amountMinor" ELSE 0 END) AS "youOweMinor",
-          SUM(CASE WHEN entries."creditorId" = CAST(${userId} AS uuid) THEN entries."amountMinor" ELSE 0 END) AS "youAreOwedMinor",
-          SUM(CASE WHEN entries."creditorId" = CAST(${userId} AS uuid) THEN entries."amountMinor" ELSE -entries."amountMinor" END) AS "netMinor",
+          SUM(CASE WHEN entries.net < 0 THEN -entries.net ELSE 0 END) AS "youOweMinor",
+          SUM(CASE WHEN entries.net > 0 THEN entries.net ELSE 0 END) AS "youAreOwedMinor",
+          SUM(entries.net) AS "netMinor",
           selected.rank AS "rank", selected.total_contexts AS "totalContexts"
         FROM selected
-        JOIN current_entries entries ON entries.context_type = selected.context_type AND entries.context_id = selected.context_id
+        JOIN pair_net entries ON entries.context_type = selected.context_type AND entries.context_id = selected.context_id AND entries.net <> 0
         LEFT JOIN "Group" group_row ON selected.context_type = 'GROUP' AND group_row."id" = selected.context_id
         LEFT JOIN "Friendship" friendship ON selected.context_type = 'FRIENDSHIP' AND friendship."id" = selected.context_id
         LEFT JOIN "User" first_user ON first_user."id" = friendship."firstUserId"
@@ -156,7 +196,7 @@ export class BalancesService {
           },
         },
       }),
-      this.currentEntries({ revision: { expense: { groupId } } }),
+      this.currentEntries({ groupId }),
     ]);
     if (!group) throw expenseNotFound();
     const transfers = this.aggregateTransfers(entries);
@@ -229,9 +269,7 @@ export class BalancesService {
       },
     });
     if (!friendship) throw expenseNotFound();
-    const entries = await this.currentEntries({
-      revision: { expense: { friendshipId } },
-    });
+    const entries = await this.currentEntries({ friendshipId });
     const counterpartyId =
       friendship.firstUserId === userId
         ? friendship.secondUserId
@@ -248,6 +286,7 @@ export class BalancesService {
   }
 
   async breakdown(userId: string, query: BalanceBreakdownQueryDto) {
+    const limit = query.limit ?? 20;
     if (query.groupId) await this.requireGroupRead(userId, query.groupId);
     if (query.friendshipId) {
       const friendship = await this.prisma.friendship.findFirst({
@@ -259,56 +298,93 @@ export class BalancesService {
       if (!friendship) throw expenseNotFound();
     }
     const cursor = query.cursor ? this.decodeCursor(query.cursor) : undefined;
-    const rows = await this.prisma.expense.findMany({
-      where: {
-        status: "ACTIVE",
-        ...(query.groupId ? { groupId: query.groupId } : {}),
-        ...(query.friendshipId ? { friendshipId: query.friendshipId } : {}),
-        currentRevision: {
-          ...(query.currency ? { currency: query.currency } : {}),
-          ledgerEntries: {
-            some: {
-              OR: [{ debtorId: userId }, { creditorId: userId }],
-              ...(query.counterpartyId
-                ? {
-                    OR: [
-                      { debtorId: userId, creditorId: query.counterpartyId },
-                      { debtorId: query.counterpartyId, creditorId: userId },
-                    ],
-                  }
-                : {}),
-            },
-          },
-        },
-        ...(cursor
-          ? {
+    const sourceCursor = query.cursor
+      ? {
+          OR: [
+            { updatedAt: { lt: cursor!.updatedAt } },
+            { updatedAt: cursor!.updatedAt, id: { lt: cursor!.id } },
+          ],
+        }
+      : {};
+    const ledgerFilter = {
+      OR: [{ debtorId: userId }, { creditorId: userId }],
+      ...(query.counterpartyId
+        ? {
+            AND: {
               OR: [
-                { updatedAt: { lt: cursor.updatedAt } },
-                { updatedAt: cursor.updatedAt, id: { lt: cursor.id } },
+                { debtorId: userId, creditorId: query.counterpartyId },
+                { debtorId: query.counterpartyId, creditorId: userId },
               ],
-            }
-          : {}),
-      },
-      include: {
-        currentRevision: {
-          include: {
-            ledgerEntries: {
-              where: { OR: [{ debtorId: userId }, { creditorId: userId }] },
-              orderBy: { sequence: "asc" },
+            },
+          }
+        : {}),
+    };
+    const [expenses, settlements] = await Promise.all([
+      this.prisma.expense.findMany({
+        where: {
+          status: "ACTIVE",
+          ...(query.groupId ? { groupId: query.groupId } : {}),
+          ...(query.friendshipId ? { friendshipId: query.friendshipId } : {}),
+          currentRevision: {
+            ...(query.currency ? { currency: query.currency } : {}),
+            ledgerEntries: { some: ledgerFilter },
+          },
+          ...sourceCursor,
+        },
+        include: {
+          currentRevision: {
+            include: {
+              ledgerEntries: {
+                where: ledgerFilter,
+                orderBy: { sequence: "asc" },
+              },
             },
           },
         },
-      },
-      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-      take: query.limit + 1,
-    });
-    const selected = rows.slice(0, query.limit);
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+        take: limit + 1,
+      }),
+      this.prisma.settlement.findMany({
+        where: {
+          status: "ACTIVE",
+          ...(query.groupId ? { groupId: query.groupId } : {}),
+          ...(query.friendshipId ? { friendshipId: query.friendshipId } : {}),
+          currentRevision: {
+            ...(query.currency ? { currency: query.currency } : {}),
+            ledgerEntries: { some: ledgerFilter },
+          },
+          ...sourceCursor,
+        },
+        include: {
+          currentRevision: {
+            include: {
+              ledgerEntries: {
+                where: ledgerFilter,
+                orderBy: { sequence: "asc" },
+              },
+            },
+          },
+        },
+        orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+        take: limit + 1,
+      }),
+    ]);
+    const selected = [
+      ...expenses.map((row) => ({ sourceType: "EXPENSE" as const, row })),
+      ...settlements.map((row) => ({ sourceType: "SETTLEMENT" as const, row })),
+    ]
+      .sort(
+        (left, right) =>
+          right.row.updatedAt.getTime() - left.row.updatedAt.getTime() ||
+          right.row.id.localeCompare(left.row.id),
+      )
+      .slice(0, limit);
     const counterpartIds = [
       ...new Set(
         selected
           .flatMap(
-            (expense) =>
-              expense.currentRevision?.ledgerEntries.flatMap((entry) => [
+            ({ row }) =>
+              row.currentRevision?.ledgerEntries.flatMap((entry) => [
                 entry.debtorId,
                 entry.creditorId,
               ]) ?? [],
@@ -322,46 +398,57 @@ export class BalancesService {
     });
     const byId = new Map(users.map((user) => [user.id, user]));
     const items = selected.flatMap(
-      (expense) =>
-        expense.currentRevision?.ledgerEntries.flatMap((entry) => {
-          if (
-            query.counterpartyId &&
-            entry.debtorId !== query.counterpartyId &&
-            entry.creditorId !== query.counterpartyId
-          )
-            return [];
+      ({ sourceType, row }) =>
+        row.currentRevision?.ledgerEntries.map((entry) => {
           const counterpartyId =
             entry.debtorId === userId ? entry.creditorId : entry.debtorId;
-          return [
-            {
+          const common = {
+            amountMinor: entry.amountMinor.toString(),
+            direction: entry.debtorId === userId ? "OWE" : "OWED",
+            counterparty: byId.get(counterpartyId)!,
+          } as const;
+          if (sourceType === "EXPENSE") {
+            const revision = row.currentRevision!;
+            return {
+              sourceType,
               expense: {
-                id: expense.id,
-                description: expense.currentRevision!.description,
-                totalMinor: expense.currentRevision!.totalMinor.toString(),
-                currency: expense.currentRevision!.currency,
-                expenseDate: expense
-                  .currentRevision!.expenseDate.toISOString()
-                  .slice(0, 10),
-                status: expense.status,
-                groupId: expense.groupId,
-                friendshipId: expense.friendshipId,
-                version: expense.version,
-                createdAt: expense.createdAt,
-                updatedAt: expense.updatedAt,
+                id: row.id,
+                description: revision.description,
+                totalMinor: revision.totalMinor.toString(),
+                currency: revision.currency,
+                expenseDate: revision.expenseDate.toISOString().slice(0, 10),
+                status: row.status,
+                groupId: row.groupId,
+                friendshipId: row.friendshipId,
+                version: row.version,
+                createdAt: row.createdAt,
+                updatedAt: row.updatedAt,
               },
-              amountMinor: entry.amountMinor.toString(),
-              direction: entry.debtorId === userId ? "OWE" : "OWED",
-              counterparty: byId.get(counterpartyId)!,
+              ...common,
+            };
+          }
+          const revision = row.currentRevision!;
+          return {
+            sourceType,
+            settlement: {
+              id: row.id,
+              amountMinor: revision.amountMinor.toString(),
+              currency: revision.currency,
+              settledOn: revision.settledOn.toISOString().slice(0, 10),
+              status: row.status,
+              groupId: row.groupId,
+              friendshipId: row.friendshipId,
             },
-          ];
+            ...common,
+          };
         }) ?? [],
     );
     const last = selected.at(-1);
     return {
       items,
       nextCursor:
-        rows.length > query.limit && last
-          ? this.encodeCursor(last.updatedAt, last.id)
+        expenses.length + settlements.length > limit && last
+          ? this.encodeCursor(last.row.updatedAt, last.row.id)
           : null,
     };
   }
@@ -373,8 +460,15 @@ export class BalancesService {
   ): Promise<boolean> {
     const entries = await database.ledgerEntry.findMany({
       where: {
-        revision: { currentFor: { is: { status: "ACTIVE", groupId } } },
-        OR: [{ debtorId: userId }, { creditorId: userId }],
+        OR: [
+          { revision: { currentFor: { is: { status: "ACTIVE", groupId } } } },
+          {
+            settlementRevision: {
+              currentFor: { is: { status: "ACTIVE", groupId } },
+            },
+          },
+        ],
+        AND: [{ OR: [{ debtorId: userId }, { creditorId: userId }] }],
       },
       select: {
         debtorId: true,
@@ -394,12 +488,39 @@ export class BalancesService {
     return [...byCurrency.values()].some((net) => net !== 0n);
   }
 
-  private currentEntries(extraWhere: object): Promise<Entry[]> {
+  private currentEntries(context: {
+    groupId?: string;
+    friendshipId?: string;
+  }): Promise<Entry[]> {
     return this.prisma.ledgerEntry.findMany({
       where: {
-        AND: [
-          { revision: { currentFor: { is: { status: "ACTIVE" } } } },
-          extraWhere,
+        OR: [
+          {
+            revision: {
+              currentFor: {
+                is: {
+                  status: "ACTIVE",
+                  ...(context.groupId ? { groupId: context.groupId } : {}),
+                  ...(context.friendshipId
+                    ? { friendshipId: context.friendshipId }
+                    : {}),
+                },
+              },
+            },
+          },
+          {
+            settlementRevision: {
+              currentFor: {
+                is: {
+                  status: "ACTIVE",
+                  ...(context.groupId ? { groupId: context.groupId } : {}),
+                  ...(context.friendshipId
+                    ? { friendshipId: context.friendshipId }
+                    : {}),
+                },
+              },
+            },
+          },
         ],
       },
       include: {
@@ -412,26 +533,37 @@ export class BalancesService {
             },
           },
         },
+        settlementRevision: {
+          select: {
+            settledOn: true,
+            settlement: {
+              select: { id: true, groupId: true, friendshipId: true },
+            },
+          },
+        },
       },
       orderBy: [{ currency: "asc" }, { sequence: "asc" }, { id: "asc" }],
     });
   }
 
   private userSummaries(userId: string, entries: readonly Entry[]) {
-    const rows = new Map<string, { owe: bigint; owed: bigint }>();
+    const rows = new Map<string, bigint>();
     for (const entry of entries) {
-      const value = rows.get(entry.currency) ?? { owe: 0n, owed: 0n };
-      if (entry.debtorId === userId) value.owe += entry.amountMinor;
-      if (entry.creditorId === userId) value.owed += entry.amountMinor;
-      rows.set(entry.currency, value);
+      rows.set(
+        entry.currency,
+        (rows.get(entry.currency) ?? 0n) +
+          (entry.creditorId === userId
+            ? entry.amountMinor
+            : -entry.amountMinor),
+      );
     }
     return [...rows]
       .sort(([a], [b]) => a.localeCompare(b))
-      .map(([currency, value]) => ({
+      .map(([currency, net]) => ({
         currency,
-        youOweMinor: value.owe.toString(),
-        youAreOwedMinor: value.owed.toString(),
-        netMinor: (value.owed - value.owe).toString(),
+        youOweMinor: (net < 0n ? -net : 0n).toString(),
+        youAreOwedMinor: (net > 0n ? net : 0n).toString(),
+        netMinor: net.toString(),
       }));
   }
 
@@ -446,16 +578,34 @@ export class BalancesService {
       }
     >();
     for (const entry of entries) {
-      const key = `${entry.currency}:${entry.debtorId}:${entry.creditorId}`;
+      const first =
+        entry.debtorId < entry.creditorId ? entry.debtorId : entry.creditorId;
+      const second =
+        entry.debtorId < entry.creditorId ? entry.creditorId : entry.debtorId;
+      const key = `${entry.currency}:${first}:${second}`;
       const existing = rows.get(key);
+      const signed =
+        entry.debtorId === first ? entry.amountMinor : -entry.amountMinor;
+      const net = (existing?.amountMinor ?? 0n) + signed;
       rows.set(key, {
-        debtorId: entry.debtorId,
-        creditorId: entry.creditorId,
+        debtorId: first,
+        creditorId: second,
         currency: entry.currency,
-        amountMinor: (existing?.amountMinor ?? 0n) + entry.amountMinor,
+        amountMinor: net,
       });
     }
     return [...rows.values()]
+      .filter((row) => row.amountMinor !== 0n)
+      .map((row) =>
+        row.amountMinor > 0n
+          ? row
+          : {
+              ...row,
+              debtorId: row.creditorId,
+              creditorId: row.debtorId,
+              amountMinor: -row.amountMinor,
+            },
+      )
       .sort(
         (a, b) =>
           a.currency.localeCompare(b.currency) ||

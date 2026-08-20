@@ -1,4 +1,8 @@
-import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import {
+  ApiProperty,
+  ApiPropertyOptional,
+  getSchemaPath,
+} from "@nestjs/swagger";
 import {
   ExpenseRevisionAction,
   ExpenseStatus,
@@ -174,17 +178,57 @@ export class FriendBalancesResponseDto {
   amounts!: BalanceAmountResponseDto[];
 }
 
-export class BalanceBreakdownItemResponseDto {
-  @ApiProperty({ type: ExpenseSummaryResponseDto })
-  expense!: ExpenseSummaryResponseDto;
+class BalanceBreakdownItemBaseResponseDto {
   @ApiProperty({ type: String }) amountMinor!: string;
   @ApiProperty({ enum: ["OWE", "OWED"] }) direction!: "OWE" | "OWED";
   @ApiProperty({ type: FinancialUserDto }) counterparty!: FinancialUserDto;
 }
 
+export class ExpenseBalanceBreakdownItemResponseDto extends BalanceBreakdownItemBaseResponseDto {
+  @ApiProperty({ enum: ["EXPENSE"] }) sourceType!: "EXPENSE";
+  @ApiProperty({ type: ExpenseSummaryResponseDto })
+  expense!: ExpenseSummaryResponseDto;
+}
+
+export class SettlementBreakdownSourceResponseDto {
+  @ApiProperty({ type: String, format: "uuid" }) id!: string;
+  @ApiProperty({ type: String }) amountMinor!: string;
+  @ApiProperty({ type: String }) currency!: string;
+  @ApiProperty({ type: String, format: "date" }) settledOn!: string;
+  @ApiProperty({ enum: ["ACTIVE", "REVERSED"] }) status!: "ACTIVE" | "REVERSED";
+  @ApiPropertyOptional({ type: String, format: "uuid", nullable: true })
+  groupId!: string | null;
+  @ApiPropertyOptional({ type: String, format: "uuid", nullable: true })
+  friendshipId!: string | null;
+}
+
+export class SettlementBalanceBreakdownItemResponseDto extends BalanceBreakdownItemBaseResponseDto {
+  @ApiProperty({ enum: ["SETTLEMENT"] }) sourceType!: "SETTLEMENT";
+  @ApiProperty({ type: SettlementBreakdownSourceResponseDto })
+  settlement!: SettlementBreakdownSourceResponseDto;
+}
+
 export class BalanceBreakdownPageResponseDto {
-  @ApiProperty({ type: [BalanceBreakdownItemResponseDto] })
-  items!: BalanceBreakdownItemResponseDto[];
+  @ApiProperty({
+    type: "array",
+    items: {
+      oneOf: [
+        { $ref: getSchemaPath(ExpenseBalanceBreakdownItemResponseDto) },
+        { $ref: getSchemaPath(SettlementBalanceBreakdownItemResponseDto) },
+      ],
+      discriminator: {
+        propertyName: "sourceType",
+        mapping: {
+          EXPENSE: getSchemaPath(ExpenseBalanceBreakdownItemResponseDto),
+          SETTLEMENT: getSchemaPath(SettlementBalanceBreakdownItemResponseDto),
+        },
+      },
+    },
+  })
+  items!: Array<
+    | ExpenseBalanceBreakdownItemResponseDto
+    | SettlementBalanceBreakdownItemResponseDto
+  >;
   @ApiPropertyOptional({ type: String, nullable: true }) nextCursor!:
     string | null;
 }

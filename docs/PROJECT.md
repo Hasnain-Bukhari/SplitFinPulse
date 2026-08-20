@@ -14,9 +14,10 @@ The application foundation, account lifecycle, friendships, private user
 discovery, shareable friend invitations, permission-aware contact selection,
 and groups with role-based membership are implemented. The financial core now
 supports versioned friend and group expenses, deterministic split and ledger
-calculations, ledger-derived balances, and non-destructive debt-simplification
-recommendations. Settlements and the later supporting capabilities remain
-deferred.
+calculations, ledger-derived balances, non-destructive debt-simplification
+recommendations, and history-preserving manual settlements. Transactional
+activity feeds, expense discussions, and a separate append-only security audit
+trail provide product and operational traceability.
 
 ## Architecture
 
@@ -38,7 +39,7 @@ Workspace packages are deferred until multiple real consumers justify shared cod
 
 ## Core Domain Model
 
-The domain centers on users, accounts, groups, expenses, payers, split allocations, ledger entries, and settlements. Friendships use one canonical participant pair with an authorized requester and preserved pending, accepted, declined, and removed states. Friend invitations are signed, expiring, single-use records whose raw tokens are never stored. Groups retain membership history, have one transferable owner, and use expiring, revocable, multi-use invitation links whose raw tokens are never stored. Expenses have a stable identity and immutable revision snapshots containing payer, split, and ledger rows; only the current active revision contributes to balances. Further financial schema is designed with its first product slice rather than committed speculatively.
+The domain centers on users, accounts, groups, expenses, payers, split allocations, ledger entries, and settlements. Friendships use one canonical participant pair with an authorized requester and preserved pending, accepted, declined, and removed states. Friend invitations are signed, expiring, single-use records whose raw tokens are never stored. Groups retain membership history, have one transferable owner, and use expiring, revocable, multi-use invitation links whose raw tokens are never stored. Expenses and settlements have stable identities and immutable revision snapshots; only their current active revisions contribute ledger rows to balances. Settlement entries offset obligations without rewriting the expenses that created them. Activity recipients are captured when an event occurs, comments retain deletion tombstones, and security audit events remain separate from the user-facing activity feed. Further financial schema is designed with its first product slice rather than committed speculatively.
 
 Money is always an integer amount in currency minor units plus an ISO currency code. An expense describes an event; payer and split allocations explain funding and responsibility; immutable or history-preserving ledger records explain resulting obligations. Balances are projections over auditable records, never the primary mutable truth.
 
@@ -46,7 +47,7 @@ Money is always an integer amount in currency minor units plus an ISO currency c
 
 The bootstrap contains configuration, database, HTTP, and system-health infrastructure. Expected product boundaries are auth, users, accounts, friends, groups, expenses, splits, ledger, settlements, categories, budgets, currencies, recurring expenses, activities, comments, attachments, notifications, reminders, analytics, reports, and admin.
 
-Modules are created only as capabilities are implemented. The Friends module owns friendship transitions, exact-email discovery, contact matching, and friend-invitation redemption. The Groups module owns group lifecycle, role permissions, membership history, ownership transfer, and group-invitation redemption. Expenses, splits, and ledger use stronger domain separation and extensive pure tests; settlements will follow the same financial boundary when introduced.
+Modules are created only as capabilities are implemented. The Friends module owns friendship transitions, exact-email discovery, contact matching, and friend-invitation redemption. The Groups module owns group lifecycle, role permissions, membership history, ownership transfer, and group-invitation redemption. Expenses, settlements, splits, and ledger use stronger domain separation and extensive pure tests. Activities and comments provide authorized product history, while audit records use a separate restricted boundary.
 
 ## Frontend Architecture
 
@@ -147,9 +148,15 @@ The Vue application is an installable responsive PWA. Capacitor can wrap the web
   reversible deletion, and auditable ledger entries
 - Overall, per-friend, and per-group multi-currency balance projections with
   expense drill-down and deterministic, non-destructive debt simplification
+- Full and partial manual settlements with idempotent creation, participant-only
+  recording, capped outstanding amounts, immutable reversal/replacement history,
+  and settlement-aware balance explanations
+- Cursor-paginated personal and group activity feeds, author-owned expense
+  comments with tombstones, and append-only personal security history
 
-No settlement, personal financial account, budget, recurring-expense, receipt,
-or currency-conversion records exist yet.
+No personal financial account, budget, recurring-expense, receipt, or
+currency-conversion records exist yet. External payment initiation and
+reconciliation remain deferred.
 
 ## Roadmap
 
@@ -159,8 +166,8 @@ product plan.
 1. Framework-independent money value objects and conservation tests.
 2. Accounts, friends, and groups with authorization boundaries.
 3. Expenses with multiple payers, split strategies, audit history, and deterministic ledger generation.
-4. Balances and partial/full settlements, then debt simplification.
-5. Categories, budgets, recurring expenses, currencies, attachments, activity, comments, and notifications.
+4. Balances, partial/full settlements, debt simplification, activity, comments, and security audit.
+5. Categories, budgets, recurring expenses, currencies, attachments, and notifications.
 6. Search, analytics, reports, administration, native packaging, and evidence-driven AI assistance.
 
 ## Important Decisions

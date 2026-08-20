@@ -1,12 +1,6 @@
 <script setup lang="ts">
 import { useInfiniteQuery, useQuery } from "@tanstack/vue-query";
-import {
-  Activity,
-  ReceiptText,
-  Settings,
-  UsersRound,
-  WalletCards,
-} from "@lucide/vue";
+import { ReceiptText, Settings, UsersRound, WalletCards } from "@lucide/vue";
 import { computed } from "vue";
 import { useRoute } from "vue-router";
 import { Button } from "@/components/ui/button";
@@ -19,6 +13,7 @@ import {
 import { api, ApiError } from "@/lib/api/client";
 import BalanceAmounts from "@/features/balances/BalanceAmounts.vue";
 import { useCurrencyFormatter } from "@/features/expenses/useCurrencyFormatter";
+import ActivityFeed from "@/features/activity/ActivityFeed.vue";
 
 const route = useRoute();
 const { formatCurrency } = useCurrencyFormatter();
@@ -215,14 +210,18 @@ function errorMessage(error: unknown): string {
               </li>
             </ul></Card
           >
-          <Card class="deferred-panel p-5 sm:col-span-2"
-            ><Activity aria-hidden="true" />
-            <h2>Activity</h2>
-            <p>
-              Group activity will appear here once the shared activity timeline
-              is implemented.
-            </p></Card
-          >
+          <Card class="p-5 sm:col-span-2">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">Timeline</p>
+                <h2>Activity</h2>
+              </div>
+              <RouterLink class="data-note" :to="`/groups/${groupId}/activity`"
+                >View all</RouterLink
+              >
+            </div>
+            <ActivityFeed :group-id="groupId" :limit="4" />
+          </Card>
         </div>
       </div>
     </template>

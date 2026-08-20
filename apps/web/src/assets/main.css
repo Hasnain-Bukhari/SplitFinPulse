@@ -708,6 +708,7 @@ a {
 }
 .form-grid input:not([type="checkbox"]),
 .form-grid select,
+.form-grid textarea,
 .data-action input {
   min-height: 2.8rem;
   width: 100%;
@@ -719,6 +720,7 @@ a {
 }
 .form-grid input:focus-visible,
 .form-grid select:focus-visible,
+.form-grid textarea:focus-visible,
 .data-action input:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;

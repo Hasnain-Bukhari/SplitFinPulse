@@ -21,14 +21,23 @@ import {
 import { BalancesService } from "./balances.service";
 import {
   BalanceBreakdownPageResponseDto,
+  ExpenseBalanceBreakdownItemResponseDto,
   FriendBalancesResponseDto,
   GroupBalancesResponseDto,
   OverallBalancesResponseDto,
+  SettlementBalanceBreakdownItemResponseDto,
+  SettlementBreakdownSourceResponseDto,
 } from "../expenses/financial-response.dto";
 
 @ApiTags("Balances")
 @ApiCookieAuth("sfp_access")
-@ApiExtraModels(BalanceBreakdownQueryDto, OverallBalanceQueryDto)
+@ApiExtraModels(
+  BalanceBreakdownQueryDto,
+  OverallBalanceQueryDto,
+  ExpenseBalanceBreakdownItemResponseDto,
+  SettlementBalanceBreakdownItemResponseDto,
+  SettlementBreakdownSourceResponseDto,
+)
 @Controller("balances")
 export class BalancesController {
   constructor(

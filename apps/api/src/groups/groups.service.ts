@@ -1,4 +1,10 @@
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
+import {
+  ActivitiesService,
+  activityTypes,
+} from "../activities/activities.service";
+import { AuditService, auditActions } from "../audit/audit.service";
+import type { Prisma } from "../generated/prisma/client";
 import { PrismaService } from "../database/prisma.service";
 import { isSupportedCurrencyCode } from "../currencies/currency-codes";
 import { ApiException } from "../http/api.exception";
@@ -18,6 +24,8 @@ export class GroupsService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(GroupAccessService) private readonly access: GroupAccessService,
+    @Inject(ActivitiesService) private readonly activities: ActivitiesService,
+    @Inject(AuditService) private readonly audit: AuditService,
   ) {}
 
   async list(
@@ -90,8 +98,8 @@ export class GroupsService {
 
   async create(userId: string, input: CreateGroupDto) {
     this.validateCurrency(input.defaultCurrency);
-    const group = await this.prisma.withTransaction((database) =>
-      database.group.create({
+    const group = await this.prisma.withTransaction(async (database) => {
+      const created = await database.group.create({
         data: {
           name: input.name.trim(),
           type: input.type,
@@ -100,8 +108,24 @@ export class GroupsService {
           createdById: userId,
           memberships: { create: { userId, role: "OWNER" } },
         },
-      }),
-    );
+      });
+      await this.activities.record(database, {
+        type: activityTypes.groupCreated,
+        actorId: userId,
+        entityType: "GROUP",
+        entityId: created.id,
+        groupId: created.id,
+        audienceUserIds: [userId],
+        payload: { groupName: created.name },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.groupCreated,
+        targetType: "GROUP",
+        targetId: created.id,
+      });
+      return created;
+    });
     return this.detail(userId, group.id);
   }
 
@@ -175,6 +199,22 @@ export class GroupsService {
             : {}),
         },
       });
+      const audienceUserIds = await this.activeUserIds(database, groupId);
+      await this.activities.record(database, {
+        type: activityTypes.groupUpdated,
+        actorId: userId,
+        entityType: "GROUP",
+        entityId: groupId,
+        groupId,
+        audienceUserIds,
+        payload: { groupName: input.name?.trim() ?? group.name },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.groupUpdated,
+        targetType: "GROUP",
+        targetId: groupId,
+      });
     });
     return this.detail(userId, groupId);
   }
@@ -207,10 +247,13 @@ export class GroupsService {
       const membershipHistoryCount = await database.groupMember.count({
         where: { groupId },
       });
-      const financialHistoryCount = await database.expense.count({
-        where: { groupId },
-      });
-      if (financialHistoryCount > 0) {
+      const [financialHistoryCount, settlementHistoryCount] = await Promise.all(
+        [
+          database.expense.count({ where: { groupId } }),
+          database.settlement.count({ where: { groupId } }),
+        ],
+      );
+      if (financialHistoryCount > 0 || settlementHistoryCount > 0) {
         throw new ApiException(
           HttpStatus.CONFLICT,
           "GROUP_DELETE_UNSAFE",
@@ -227,6 +270,12 @@ export class GroupsService {
       await database.groupInvitation.deleteMany({ where: { groupId } });
       await database.groupMember.deleteMany({ where: { groupId } });
       await database.group.delete({ where: { id: groupId } });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: auditActions.groupDeleted,
+        targetType: "GROUP",
+        targetId: groupId,
+      });
     });
   }
 
@@ -260,6 +309,26 @@ export class GroupsService {
           data: { revokedAt: now },
         });
       }
+      const audienceUserIds = await this.activeUserIds(database, groupId);
+      await this.activities.record(database, {
+        type: archived
+          ? activityTypes.groupArchived
+          : activityTypes.groupRestored,
+        actorId: userId,
+        entityType: "GROUP",
+        entityId: groupId,
+        groupId,
+        audienceUserIds,
+        payload: { groupName: group.name },
+      });
+      await this.audit.record(database, {
+        actorId: userId,
+        action: archived
+          ? auditActions.groupArchived
+          : auditActions.groupRestored,
+        targetType: "GROUP",
+        targetId: groupId,
+      });
     });
     return this.detail(userId, groupId);
   }
@@ -272,5 +341,16 @@ export class GroupsService {
         "Unsupported currency code",
       );
     }
+  }
+
+  private async activeUserIds(
+    database: Prisma.TransactionClient,
+    groupId: string,
+  ) {
+    const members = await database.groupMember.findMany({
+      where: { groupId, leftAt: null },
+      select: { userId: true },
+    });
+    return members.map((member) => member.userId);
   }
 }

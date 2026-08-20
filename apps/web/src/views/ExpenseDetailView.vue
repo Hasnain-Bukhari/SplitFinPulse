@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { useCurrencyFormatter } from "@/features/expenses/useCurrencyFormatter";
 import { api, ApiError, type ExpenseRevisionPage } from "@/lib/api/client";
 import { sessionQueryOptions } from "@/lib/query-client";
+import ExpenseComments from "@/features/comments/ExpenseComments.vue";
 
 const route = useRoute();
 const queryClient = useQueryClient();
@@ -217,6 +218,13 @@ function personName(id: string): string {
           </ul></Card
         >
       </div>
+      <Card class="p-5"
+        ><p class="section-kicker">Discussion</p>
+        <h2 class="mb-3 font-bold">Comments</h2>
+        <ExpenseComments
+          :expense-id="id"
+          :writable="expense.data.value.status === 'ACTIVE'"
+      /></Card>
       <Card class="p-5"
         ><p class="section-kicker">Auditable effect</p>
         <h2 class="font-bold">Who owes whom</h2>

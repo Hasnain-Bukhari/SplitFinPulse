@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import BalanceAmounts from "@/features/balances/BalanceAmounts.vue";
 import BalanceBreakdown from "@/features/balances/BalanceBreakdown.vue";
+import SettlementHistory from "@/features/settlements/SettlementHistory.vue";
 import { api } from "@/lib/api/client";
 
 const route = useRoute();
@@ -40,19 +41,37 @@ const balances = useQuery(
             {{ balances.data.value.friend.name }}
           </h1>
         </div>
-        <Button as-child
-          ><RouterLink :to="`/expenses/new?friendshipId=${friendshipId}`"
-            >Add expense</RouterLink
-          ></Button
-        >
+        <div class="flex gap-2">
+          <Button
+            v-if="
+              balances.data.value.amounts.some(
+                (amount) => amount.netMinor !== '0',
+              )
+            "
+            as-child
+            ><RouterLink :to="`/settlements/new?friendshipId=${friendshipId}`"
+              >Settle up</RouterLink
+            ></Button
+          >
+          <Button as-child variant="outline"
+            ><RouterLink :to="`/expenses/new?friendshipId=${friendshipId}`"
+              >Add expense</RouterLink
+            ></Button
+          >
+        </div>
       </div>
       <Card class="p-5"
         ><BalanceAmounts :amounts="balances.data.value.amounts"
       /></Card>
       <Card class="p-5"
         ><p class="section-kicker">Traceability</p>
-        <h2 class="mb-3 font-bold">Source expenses</h2>
+        <h2 class="mb-3 font-bold">Balance history</h2>
         <BalanceBreakdown :filters="{ friendshipId }"
+      /></Card>
+      <Card class="p-5"
+        ><p class="section-kicker">Payments</p>
+        <h2 class="mb-3 font-bold">Settlement history</h2>
+        <SettlementHistory :friendship-id="friendshipId"
       /></Card>
     </template>
   </div>

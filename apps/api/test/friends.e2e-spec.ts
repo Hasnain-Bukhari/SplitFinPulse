@@ -6,6 +6,7 @@ import { AppModule } from "../src/app.module";
 import { configureApplication } from "../src/application";
 import { GoogleOidcService } from "../src/auth/google-oidc.service";
 import { PrismaService } from "../src/database/prisma.service";
+import { deleteTraceRecords } from "./test-cleanup";
 
 interface TestSession {
   userId: string;
@@ -71,6 +72,7 @@ describe("friends and invitations", () => {
       (value): value is string => Boolean(value),
     );
     if (userIds.length) {
+      await deleteTraceRecords(prisma, userIds);
       await prisma.friendInvitation.deleteMany({
         where: {
           OR: [

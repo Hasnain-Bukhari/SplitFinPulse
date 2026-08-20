@@ -47,8 +47,11 @@ export class PrismaService
         });
       } catch (error) {
         const retryable =
-          error instanceof Prisma.PrismaClientKnownRequestError &&
-          error.code === "P2034";
+          (error instanceof Prisma.PrismaClientKnownRequestError &&
+            error.code === "P2034") ||
+          (error instanceof Error &&
+            (error.name === "TransactionWriteConflict" ||
+              error.message === "TransactionWriteConflict"));
         if (!retryable || attempt >= retries) throw error;
       }
     }

@@ -7,6 +7,7 @@ import { AppModule } from "../src/app.module";
 import { configureApplication } from "../src/application";
 import { GoogleOidcService } from "../src/auth/google-oidc.service";
 import { PrismaService } from "../src/database/prisma.service";
+import { deleteTraceRecords } from "./test-cleanup";
 
 const testRunId = randomUUID();
 const testProfile = {
@@ -50,6 +51,7 @@ describe("system endpoints", () => {
       ? await prisma.user.findUnique({ where: { id: e2eUserId } })
       : undefined;
     if (user) {
+      await deleteTraceRecords(prisma, [user.id]);
       await prisma.accountLifecycleEvent.deleteMany({
         where: { userId: user.id },
       });
