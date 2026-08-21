@@ -84,6 +84,9 @@ export class UsersService {
                   input.notificationPreferences.expenseActivity,
                 notifyReminders: input.notificationPreferences.reminders,
                 notifyInvitations: input.notificationPreferences.invitations,
+                notifyBudgetAlerts:
+                  input.notificationPreferences.budgetAlerts ??
+                  existing.notifyBudgetAlerts,
               }
             : {}),
         },
@@ -156,6 +159,12 @@ export class UsersService {
           where: { action: { in: [...personalSecurityActions] } },
           orderBy: { createdAt: "asc" },
         },
+        notifications: { orderBy: { occurredAt: "asc" } },
+        notificationPreferences: {
+          orderBy: [{ category: "asc" }, { channel: "asc" }],
+        },
+        remindersSent: { orderBy: { createdAt: "asc" } },
+        remindersReceived: { orderBy: { createdAt: "asc" } },
       },
     });
     const expenses = await this.prisma.expense.findMany({
@@ -222,7 +231,7 @@ export class UsersService {
       orderBy: { createdAt: "asc" },
     });
     return {
-      schemaVersion: 4,
+      schemaVersion: 5,
       generatedAt: new Date().toISOString(),
       profile: presentUser(user),
       identities: user.identities.map((identity) => ({
@@ -434,6 +443,33 @@ export class UsersService {
         payload: event.payload,
         occurredAt: event.occurredAt,
       })),
+      notifications: user.notifications.map((notification) => ({
+        id: notification.id,
+        category: notification.category,
+        type: notification.type,
+        sourceType: notification.sourceType,
+        sourceId: notification.sourceId,
+        targetType: notification.targetType,
+        targetId: notification.targetId,
+        payload: notification.payload,
+        occurredAt: notification.occurredAt,
+        readAt: notification.readAt,
+      })),
+      notificationChannelPreferences: user.notificationPreferences.map(
+        (preference) => ({
+          category: preference.category,
+          channel: preference.channel,
+          enabled: preference.enabled,
+        }),
+      ),
+      reminders: {
+        sent: user.remindersSent.map((reminder) =>
+          this.exportReminder(reminder),
+        ),
+        received: user.remindersReceived.map((reminder) =>
+          this.exportReminder(reminder),
+        ),
+      },
       auditEvents: user.auditEvents.map((event) => ({
         id: event.id,
         action: event.action,
@@ -472,6 +508,28 @@ export class UsersService {
       : null;
   }
 
+  private exportReminder(reminder: {
+    id: string;
+    senderId: string;
+    recipientId: string;
+    groupId: string | null;
+    friendshipId: string | null;
+    currency: string;
+    outstandingMinor: bigint;
+    processedAmountMinor: bigint | null;
+    scheduledFor: Date;
+    status: string;
+    outcomeCode: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }) {
+    return {
+      ...reminder,
+      outstandingMinor: reminder.outstandingMinor.toString(),
+      processedAmountMinor: reminder.processedAmountMinor?.toString() ?? null,
+    };
+  }
+
   async deactivate(
     principal: AuthenticatedPrincipal,
     requestId?: string,
@@ -484,6 +542,24 @@ export class UsersService {
       await database.authSession.updateMany({
         where: { userId: principal.userId, revokedAt: null },
         data: { revokedAt: new Date(), revokedReason: "ACCOUNT_DEACTIVATED" },
+      });
+      await database.pushDevice.updateMany({
+        where: { userId: principal.userId, retiredAt: null },
+        data: { retiredAt: new Date() },
+      });
+      await database.reminder.updateMany({
+        where: {
+          status: "SCHEDULED",
+          OR: [
+            { senderId: principal.userId },
+            { recipientId: principal.userId },
+          ],
+        },
+        data: {
+          status: "CANCELED",
+          canceledAt: new Date(),
+          outcomeCode: "ACCOUNT_DEACTIVATED",
+        },
       });
       await database.accountLifecycleEvent.create({
         data: { userId: principal.userId, type: "DEACTIVATED" },
@@ -542,6 +618,34 @@ export class UsersService {
         where: { userId: principal.userId, revokedAt: null },
         data: { revokedAt: new Date(), revokedReason: "ACCOUNT_DELETED" },
       });
+      await database.pushDevice.updateMany({
+        where: { userId: principal.userId, retiredAt: null },
+        data: { retiredAt: now },
+      });
+      await database.reminder.updateMany({
+        where: {
+          status: "SCHEDULED",
+          OR: [
+            { senderId: principal.userId },
+            { recipientId: principal.userId },
+          ],
+        },
+        data: {
+          status: "CANCELED",
+          canceledAt: now,
+          outcomeCode: "ACCOUNT_DELETED",
+        },
+      });
+      await database.recurringExpense.updateMany({
+        where: { creatorId: principal.userId, status: "ACTIVE" },
+        data: {
+          status: "PAUSED",
+          pausedAt: now,
+          nextRunAt: null,
+          lastFailureCode: "CREATOR_UNAVAILABLE",
+          lastFailureAt: now,
+        },
+      });
       await database.friendship.updateMany({
         where: {
           status: { in: ["PENDING", "ACCEPTED"] },
@@ -588,6 +692,7 @@ export class UsersService {
           notifyExpenseActivity: false,
           notifyReminders: false,
           notifyInvitations: false,
+          notifyBudgetAlerts: false,
           status: "DELETED",
           deactivatedAt: null,
           deletedAt: now,

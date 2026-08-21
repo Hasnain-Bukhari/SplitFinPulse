@@ -2,10 +2,12 @@ packages:
   - apps/*
 
 allowBuilds:
+  "@firebase/util": true
   "@prisma/engines": true
   "@scarf/scarf": false
   esbuild: true
   prisma: true
+  protobufjs: true
   sharp: true
   tesseract.js: true
   vue-demi: true

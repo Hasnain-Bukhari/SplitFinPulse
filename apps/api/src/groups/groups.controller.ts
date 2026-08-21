@@ -12,6 +12,7 @@ import {
   Post,
   Query,
 } from "@nestjs/common";
+import { IsEmail } from "class-validator";
 import { ApiCookieAuth, ApiExtraModels, ApiTags } from "@nestjs/swagger";
 import { Throttle } from "@nestjs/throttler";
 import type { AuthenticatedPrincipal } from "../auth/auth.types";
@@ -27,6 +28,11 @@ import {
   UpdateGroupMemberDto,
 } from "./groups.dto";
 import { GroupsService } from "./groups.service";
+
+class EmailGroupInvitationDto {
+  @IsEmail()
+  email!: string;
+}
 import { GroupMembershipsService } from "./group-memberships.service";
 import { GroupInvitationsService } from "./group-invitations.service";
 
@@ -181,6 +187,20 @@ export class GroupsController {
     @Param("groupId", ParseUUIDPipe) groupId: string,
   ) {
     return this.invitationsService.create(principal.userId, groupId);
+  }
+
+  @Post(":groupId/invitations/email")
+  @Throttle({ default: { limit: 5, ttl: 3_600_000 } })
+  createEmailInvitation(
+    @CurrentPrincipal() principal: AuthenticatedPrincipal,
+    @Param("groupId", ParseUUIDPipe) groupId: string,
+    @Body() input: EmailGroupInvitationDto,
+  ) {
+    return this.invitationsService.createEmail(
+      principal.userId,
+      groupId,
+      input.email,
+    );
   }
 
   @Get(":groupId/invitations")

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useQuery } from "@tanstack/vue-query";
+import { useMutation, useQuery } from "@tanstack/vue-query";
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { Card } from "@/components/ui/card";
@@ -40,6 +40,10 @@ const transfers = computed(() => {
   return data.simplifyDebtsEnabled && !showOriginal.value
     ? data.recommendations
     : data.rawObligations;
+});
+const reminder = useMutation({
+  mutationFn: (input: { recipientId: string; currency: string }) =>
+    api.createReminder({ ...input, groupId: groupId.value }),
 });
 </script>
 
@@ -169,6 +173,19 @@ const transfers = computed(() => {
                 :to="`/settlements/new?groupId=${groupId}`"
                 >Settle up</RouterLink
               >
+              <button
+                v-if="item.to.id === session.data.value?.user.id"
+                class="text-primary rounded text-xs font-semibold focus-visible:ring-2"
+                type="button"
+                @click="
+                  reminder.mutate({
+                    recipientId: item.from.id,
+                    currency: item.currency,
+                  })
+                "
+              >
+                Send reminder
+              </button>
             </li>
           </ul>
         </Card>

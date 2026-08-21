@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { useMutation, useQuery } from "@tanstack/vue-query";
-import { reactive, watch } from "vue";
+import { reactive, ref, watch } from "vue";
 import SettingsNav from "@/components/SettingsNav.vue";
 import { Button } from "@/components/ui/button";
-import { api, type UpdateProfileInput } from "@/lib/api/client";
+import {
+  api,
+  type ChannelPreference,
+  type UpdateProfileInput,
+} from "@/lib/api/client";
 import {
   queryClient,
   sessionQueryKey,
   sessionQueryOptions,
 } from "@/lib/query-client";
+import { enablePushNotifications } from "@/lib/push";
 
 const session = useQuery(sessionQueryOptions);
 const options = useQuery({
@@ -25,8 +30,22 @@ const form = reactive<UpdateProfileInput>({
     expenseActivity: true,
     reminders: true,
     invitations: true,
+    budgetAlerts: true,
   },
 });
+const channelPreferences = ref<ChannelPreference[]>([]);
+const pushStatus = ref("");
+const channels = useQuery({
+  queryKey: ["notifications", "preferences"],
+  queryFn: api.notificationPreferences,
+});
+watch(
+  () => channels.data.value?.preferences,
+  (value) => {
+    if (value) channelPreferences.value = value.map((item) => ({ ...item }));
+  },
+  { immediate: true },
+);
 
 watch(
   () => session.data.value?.user,
@@ -45,11 +64,16 @@ watch(
 );
 
 const save = useMutation({
-  mutationFn: () =>
-    api.updateProfile({
-      ...form,
-      notificationPreferences: { ...form.notificationPreferences },
-    }),
+  mutationFn: async () => {
+    const [user] = await Promise.all([
+      api.updateProfile({
+        ...form,
+        notificationPreferences: { ...form.notificationPreferences },
+      }),
+      api.updateNotificationPreferences(channelPreferences.value),
+    ]);
+    return user;
+  },
   onSuccess: (user) => {
     queryClient.setQueryData(
       sessionQueryKey,
@@ -58,6 +82,18 @@ const save = useMutation({
     );
   },
 });
+async function enablePush(): Promise<void> {
+  pushStatus.value = "Enabling push notifications…";
+  try {
+    await enablePushNotifications();
+    pushStatus.value = "Push notifications enabled on this device.";
+  } catch (error) {
+    pushStatus.value =
+      error instanceof Error
+        ? error.message
+        : "Push notifications could not be enabled.";
+  }
+}
 </script>
 
 <template>
@@ -117,7 +153,7 @@ const save = useMutation({
           </select></label
         >
         <fieldset>
-          <legend>Future notification preferences</legend>
+          <legend>Notification preferences</legend>
           <label class="check-row"
             ><input
               v-model="form.notificationPreferences.expenseActivity"
@@ -139,10 +175,40 @@ const save = useMutation({
             />
             Friend and group invitations</label
           >
-          <small
-            >Delivery is not enabled yet; these choices will be honored when it
-            is.</small
+          <label class="check-row"
+            ><input
+              v-model="form.notificationPreferences.budgetAlerts"
+              type="checkbox"
+            />
+            Budget alerts</label
           >
+          <div class="mt-3 grid gap-2 sm:grid-cols-3">
+            <label
+              v-for="item in channelPreferences"
+              :key="`${item.category}:${item.channel}`"
+              class="check-row text-xs"
+              ><input v-model="item.enabled" type="checkbox" />{{
+                item.category.replaceAll("_", " ").toLowerCase()
+              }}
+              · {{ item.channel.toLowerCase() }}</label
+            >
+          </div>
+          <small
+            >Category switches disable every channel. Channel switches control
+            in-app, push, or email delivery individually.</small
+          >
+          <div class="mt-3">
+            <Button type="button" variant="outline" @click="enablePush"
+              >Enable push on this device</Button
+            >
+            <p
+              v-if="pushStatus"
+              class="text-muted-foreground mt-2 text-xs"
+              role="status"
+            >
+              {{ pushStatus }}
+            </p>
+          </div>
         </fieldset>
         <p v-if="save.isSuccess.value" class="form-success" role="status">
           Preferences saved.

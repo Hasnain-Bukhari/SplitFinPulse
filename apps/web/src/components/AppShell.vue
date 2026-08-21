@@ -14,6 +14,8 @@ import {
   WalletCards,
   ReceiptText,
   Plus,
+  Bell,
+  ChartNoAxesCombined,
 } from "@lucide/vue";
 import { computed } from "vue";
 import { useRoute, useRouter } from "vue-router";
@@ -31,6 +33,7 @@ const navigation = [
   { label: "Balances", to: "/balances", icon: WalletCards },
   { label: "Groups", to: "/groups", icon: UsersRound },
   { label: "Activity", to: "/activity", icon: Activity },
+  { label: "Analytics", to: "/analytics", icon: ChartNoAxesCombined },
   { label: "Settings", to: "/settings/profile", icon: Settings },
 ];
 const mobileNavigation = [
@@ -45,6 +48,12 @@ const route = useRoute();
 const router = useRouter();
 const ui = useUiStore();
 const session = useQuery(sessionQueryOptions);
+const unread = useQuery({
+  queryKey: ["notifications", "unread-count"],
+  queryFn: api.notificationUnreadCount,
+  refetchInterval: 60_000,
+  refetchOnWindowFocus: true,
+});
 const pageTitle = computed(
   () =>
     (typeof route.meta.title === "string" ? route.meta.title : undefined) ??
@@ -128,6 +137,20 @@ const logout = useMutation({
           </h1>
         </div>
         <div class="flex items-center gap-1">
+          <RouterLink
+            class="relative rounded-md p-2 focus-visible:ring-2"
+            to="/notifications"
+            aria-label="Notifications"
+          >
+            <Bell :size="19" aria-hidden="true" />
+            <span
+              v-if="unread.data.value?.count"
+              class="bg-primary text-primary-foreground absolute -top-1 -right-1 min-w-5 rounded-full px-1 text-center text-[10px] font-bold"
+              >{{
+                unread.data.value.count > 99 ? "99+" : unread.data.value.count
+              }}</span
+            >
+          </RouterLink>
           <ThemeToggle />
           <details class="profile-menu">
             <summary aria-label="Open profile menu">

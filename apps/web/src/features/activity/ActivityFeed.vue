@@ -22,8 +22,8 @@ const result = useInfiniteQuery(
       : ["activities", "personal"],
     queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
       props.groupId
-        ? api.groupActivities(props.groupId, pageParam)
-        : api.activities(pageParam),
+        ? api.groupActivities(props.groupId, pageParam, props.limit)
+        : api.activities(pageParam, props.limit),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (page: ActivityPage) => page.nextCursor ?? undefined,
   })),

@@ -24,6 +24,7 @@ export interface AuthenticatedUser {
     expenseActivity: boolean;
     reminders: boolean;
     invitations: boolean;
+    budgetAlerts: boolean;
   };
   status: "ACTIVE" | "DEACTIVATED" | "DELETED";
 }
@@ -55,6 +56,167 @@ export interface UpdateProfileInput {
   timezone: string;
   locale: string;
   notificationPreferences: AuthenticatedUser["notificationPreferences"];
+}
+
+export type RecurrenceUnit = "DAY" | "WEEK" | "MONTH" | "YEAR";
+export interface RecurrenceRuleInput {
+  unit: RecurrenceUnit;
+  interval: number;
+  weekdays?: number[];
+  anchorDate: string;
+  localTime: string;
+  timezone: string;
+  endDate?: string;
+}
+export interface RecurringExpenseInput {
+  template: ExpenseWriteInput;
+  schedule: RecurrenceRuleInput;
+}
+export interface RecurrenceOccurrence {
+  id?: string;
+  occurrenceKey: string;
+  localDate: string;
+  localTime?: string;
+  scheduledFor: string;
+  status?: "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELED";
+  expenseId?: string | null;
+  lastErrorCode?: string | null;
+}
+export interface RecurringExpense {
+  id: string;
+  status: "ACTIVE" | "PAUSED" | "COMPLETED" | "ARCHIVED";
+  version: number;
+  creatorId: string;
+  groupId: string | null;
+  friendshipId: string | null;
+  nextRunAt: string | null;
+  lastFailureCode: string | null;
+  template: {
+    description: string;
+    totalMinor: string;
+    currency: string;
+    notes: string | null;
+    splitMethod: ExpenseSplitMethod;
+    categoryId: string | null;
+    payers: Array<{ userId: string; amountMinor: string }>;
+    participants: Array<{
+      userId: string;
+      amountMinor: string;
+      input: string | null;
+    }>;
+  } | null;
+  schedule: RecurrenceRuleInput | null;
+  permissions: { canManage: boolean };
+}
+export interface RecurringExpensePage {
+  items: RecurringExpense[];
+  nextCursor: string | null;
+}
+
+export type NotificationCategory =
+  "EXPENSE_ACTIVITY" | "INVITATIONS" | "REMINDERS" | "BUDGET_ALERTS";
+export type NotificationChannel = "IN_APP" | "PUSH" | "EMAIL";
+export interface NotificationItem {
+  id: string;
+  category: NotificationCategory;
+  type: string;
+  actor: FriendUserSummary | null;
+  payload: Record<string, unknown>;
+  occurredAt: string;
+  readAt: string | null;
+  target: { type: string; id: string } | null;
+}
+export interface NotificationPage {
+  items: NotificationItem[];
+  nextCursor: string | null;
+}
+export interface ChannelPreference {
+  category: NotificationCategory;
+  channel: NotificationChannel;
+  enabled: boolean;
+}
+export interface Reminder {
+  id: string;
+  senderId: string;
+  recipientId: string;
+  groupId: string | null;
+  friendshipId: string | null;
+  currency: string;
+  outstandingMinor: string;
+  processedAmountMinor: string | null;
+  scheduledFor: string;
+  status: "SCHEDULED" | "COMPLETED" | "CANCELED" | "SKIPPED" | "FAILED";
+  outcomeCode: string | null;
+  createdAt: string;
+}
+
+export interface AnalyticsBucket {
+  id: string | null;
+  name: string;
+  icon?: string | null;
+  expenseCount: number;
+  yourShareMinor: string;
+  wholeExpenseMinor: string;
+}
+export interface SpendingAnalytics {
+  range: { dateFrom: string; dateTo: string };
+  currency: string;
+  metric: "YOUR_SHARE" | "WHOLE_EXPENSE";
+  availableCurrencies: string[];
+  summary: {
+    expenseCount: number;
+    yourShareMinor: string;
+    wholeExpenseMinor: string;
+  };
+  months: Array<{
+    month: string;
+    expenseCount: number;
+    yourShareMinor: string;
+    wholeExpenseMinor: string;
+  }>;
+  categories: { items: AnalyticsBucket[]; other: AnalyticsBucket | null };
+  groups: { items: AnalyticsBucket[]; other: AnalyticsBucket | null };
+  people: {
+    items: Array<{
+      user: FriendUserSummary;
+      expenseCount: number;
+      shareMinor: string;
+    }>;
+    other: { expenseCount: number; shareMinor: string } | null;
+  };
+}
+
+export type BudgetScope = "PERSONAL" | "CATEGORY" | "GROUP";
+export interface BudgetInput {
+  scope: BudgetScope;
+  groupId?: string;
+  categoryId?: string;
+  currency: string;
+  amountMinor: string;
+  startMonth: string;
+  endMonth?: string;
+}
+export interface Budget {
+  id: string;
+  scope: BudgetScope;
+  currency: string;
+  amountMinor: string;
+  month: string;
+  spentMinor: string;
+  remainingMinor: string;
+  percentUsed: number;
+  startMonth: string;
+  endMonth: string | null;
+  status: "ACTIVE" | "ARCHIVED";
+  version: number;
+  group: { id: string; name: string } | null;
+  category: {
+    id: string;
+    name: string;
+    icon: string;
+    archivedAt: string | null;
+  } | null;
+  permissions: { canManage: boolean };
 }
 
 export interface FriendUserSummary {
@@ -1110,6 +1272,155 @@ export const api = {
       method: "POST",
       headers: { "If-Match": String(version) },
     }),
+  previewRecurringExpense: (
+    input: RecurringExpenseInput,
+  ): Promise<{ occurrences: RecurrenceOccurrence[] }> =>
+    request("/api/v1/recurring-expenses/preview", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  createRecurringExpense: (
+    input: RecurringExpenseInput,
+    idempotencyKey: string,
+  ): Promise<RecurringExpense> =>
+    request("/api/v1/recurring-expenses", {
+      method: "POST",
+      headers: { "Idempotency-Key": idempotencyKey },
+      body: JSON.stringify(input),
+    }),
+  recurringExpenses: (cursor?: string): Promise<RecurringExpensePage> =>
+    request(
+      `/api/v1/recurring-expenses${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
+  recurringExpense: (id: string): Promise<RecurringExpense> =>
+    request(`/api/v1/recurring-expenses/${encodeURIComponent(id)}`),
+  updateRecurringExpense: (
+    id: string,
+    version: number,
+    input: RecurringExpenseInput,
+  ): Promise<RecurringExpense> =>
+    request(`/api/v1/recurring-expenses/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "If-Match": String(version) },
+      body: JSON.stringify(input),
+    }),
+  pauseRecurringExpense: (
+    id: string,
+    version: number,
+  ): Promise<RecurringExpense> =>
+    request(`/api/v1/recurring-expenses/${encodeURIComponent(id)}/pause`, {
+      method: "POST",
+      headers: { "If-Match": String(version) },
+    }),
+  resumeRecurringExpense: (
+    id: string,
+    version: number,
+  ): Promise<RecurringExpense> =>
+    request(`/api/v1/recurring-expenses/${encodeURIComponent(id)}/resume`, {
+      method: "POST",
+      headers: { "If-Match": String(version) },
+    }),
+  recurringOccurrences: (
+    id: string,
+    cursor?: string,
+  ): Promise<{ items: RecurrenceOccurrence[]; nextCursor: string | null }> =>
+    request(
+      `/api/v1/recurring-expenses/${encodeURIComponent(id)}/occurrences${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    ),
+  retryRecurringOccurrence: (
+    id: string,
+    occurrenceId: string,
+  ): Promise<{ items: RecurrenceOccurrence[] }> =>
+    request(
+      `/api/v1/recurring-expenses/${encodeURIComponent(id)}/occurrences/${encodeURIComponent(occurrenceId)}/retry`,
+      { method: "POST" },
+    ),
+  notifications: (
+    cursor?: string,
+    unreadOnly = false,
+  ): Promise<NotificationPage> => {
+    const query = new URLSearchParams();
+    if (cursor) query.set("cursor", cursor);
+    if (unreadOnly) query.set("unreadOnly", "true");
+    return request(`/api/v1/notifications${query.size ? `?${query}` : ""}`);
+  },
+  notificationUnreadCount: (): Promise<{ count: number }> =>
+    request("/api/v1/notifications/unread-count"),
+  markNotificationRead: (id: string): Promise<{ id: string; read: true }> =>
+    request(`/api/v1/notifications/${encodeURIComponent(id)}/read`, {
+      method: "PATCH",
+    }),
+  markAllNotificationsRead: (): Promise<{ updated: number }> =>
+    request("/api/v1/notifications/read-all", { method: "POST" }),
+  notificationPreferences: (): Promise<{ preferences: ChannelPreference[] }> =>
+    request("/api/v1/notifications/preferences"),
+  updateNotificationPreferences: (
+    preferences: ChannelPreference[],
+  ): Promise<{ preferences: ChannelPreference[] }> =>
+    request("/api/v1/notifications/preferences", {
+      method: "PATCH",
+      body: JSON.stringify({ preferences }),
+    }),
+  registerPushDevice: (token: string): Promise<{ id: string }> =>
+    request("/api/v1/push-devices", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+  retirePushDevice: (id: string): Promise<void> =>
+    request(`/api/v1/push-devices/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  createReminder: (input: {
+    recipientId: string;
+    groupId?: string;
+    friendshipId?: string;
+    currency: string;
+    scheduledFor?: string;
+  }): Promise<Reminder> =>
+    request("/api/v1/reminders", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  reminders: (
+    direction: "sent" | "received",
+    cursor?: string,
+  ): Promise<{ items: Reminder[]; nextCursor: string | null }> =>
+    request(
+      `/api/v1/reminders?${new URLSearchParams({ direction, ...(cursor ? { cursor } : {}) })}`,
+    ),
+  cancelReminder: (id: string): Promise<void> =>
+    request(`/api/v1/reminders/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  analytics: (input: {
+    dateFrom: string;
+    dateTo: string;
+    currency: string;
+    metric: "YOUR_SHARE" | "WHOLE_EXPENSE";
+    limit?: number;
+  }): Promise<SpendingAnalytics> =>
+    request(
+      `/api/v1/analytics/spending?${new URLSearchParams({ dateFrom: input.dateFrom, dateTo: input.dateTo, currency: input.currency, metric: input.metric, ...(input.limit ? { limit: String(input.limit) } : {}) })}`,
+    ),
+  budgets: (month: string): Promise<{ month: string; items: Budget[] }> =>
+    request(`/api/v1/budgets?month=${encodeURIComponent(month)}`),
+  createBudget: (input: BudgetInput): Promise<Budget> =>
+    request("/api/v1/budgets", { method: "POST", body: JSON.stringify(input) }),
+  updateBudget: (
+    id: string,
+    version: number,
+    input: BudgetInput,
+  ): Promise<Budget> =>
+    request(`/api/v1/budgets/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "If-Match": String(version) },
+      body: JSON.stringify(input),
+    }),
+  archiveBudget: (id: string, version: number): Promise<Budget> =>
+    request(`/api/v1/budgets/${encodeURIComponent(id)}/archive`, {
+      method: "POST",
+      headers: { "If-Match": String(version) },
+    }),
   balances: (
     cursor?: string,
     reportingCurrency?: string,
@@ -1184,15 +1495,20 @@ export const api = {
     request(
       `/api/v1/settlements/${encodeURIComponent(id)}/revisions${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
     ),
-  activities: (cursor?: string): Promise<ActivityPage> => {
+  activities: (cursor?: string, limit?: number): Promise<ActivityPage> => {
     const query = new URLSearchParams();
     if (cursor) query.set("cursor", cursor);
+    if (limit) query.set("limit", String(limit));
     const suffix = query.size ? `?${query}` : "";
     return request(`/api/v1/activities${suffix}`);
   },
-  groupActivities: (groupId: string, cursor?: string): Promise<ActivityPage> =>
+  groupActivities: (
+    groupId: string,
+    cursor?: string,
+    limit?: number,
+  ): Promise<ActivityPage> =>
     request(
-      `/api/v1/groups/${encodeURIComponent(groupId)}/activities${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+      `/api/v1/groups/${encodeURIComponent(groupId)}/activities?${new URLSearchParams({ ...(cursor ? { cursor } : {}), ...(limit ? { limit: String(limit) } : {}) })}`,
     ),
   expenseComments: (
     expenseId: string,

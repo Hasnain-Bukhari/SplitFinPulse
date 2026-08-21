@@ -25,7 +25,7 @@ The backend is a modular monolith. Business capabilities own their behavior and 
 
 Complex financial capabilities will separate pure domain logic from application orchestration, Prisma persistence, and HTTP presentation. Small capabilities may use a simpler structure. Controllers validate transport input, invoke an application operation, and map the result; they do not contain business rules.
 
-External systems such as exchange rates, storage, email, notifications, OCR, and payments use narrow provider boundaries. Receipt storage currently uses a private local-filesystem adapter, OCR uses a durable PostgreSQL-leased worker with local Tesseract image processing, and exchange rates use a replaceable Frankfurter v2 adapter with manual and explicitly unavailable fallbacks. Redis, hosted object storage, hosted OCR, and general-purpose distributed caches remain absent.
+External systems such as exchange rates, storage, email, notifications, OCR, and payments use narrow provider boundaries. Receipt storage currently uses a private local-filesystem adapter, OCR uses its durable PostgreSQL-leased worker with local Tesseract image processing, and exchange rates use a replaceable Frankfurter v2 adapter with manual and explicitly unavailable fallbacks. A shared PostgreSQL-leased job runner now owns recurring expense materialization, reminders, budget evaluation, and remote notification delivery. Firebase Cloud Messaging and Resend sit behind replaceable push and email adapters. Redis, hosted object storage, hosted OCR, and general-purpose distributed caches remain absent.
 
 ## Repository Structure
 
@@ -45,7 +45,7 @@ Money is always an integer amount in currency minor units plus an ISO currency c
 
 ## Backend Modules
 
-The bootstrap contains configuration, database, HTTP, and system-health infrastructure. Expected product boundaries are auth, users, accounts, friends, groups, expenses, splits, ledger, settlements, categories, budgets, currencies, recurring expenses, activities, comments, attachments, notifications, reminders, analytics, reports, and admin.
+The bootstrap contains configuration, database, HTTP, jobs, and system-health infrastructure. Implemented product boundaries include auth, users, friends, groups, expenses, ledger, settlements, categories, budgets, currencies, recurring expenses, activities, comments, attachments, notifications, reminders, and analytics.
 
 Modules are created only as capabilities are implemented. The Friends module owns friendship transitions, exact-email discovery, contact matching, and friend-invitation redemption. The Groups module owns group lifecycle, role permissions, membership history, ownership transfer, and group-invitation redemption. Expenses, settlements, splits, and ledger use stronger domain separation and extensive pure tests. Activities and comments provide authorized product history, while audit records use a separate restricted boundary.
 
@@ -162,10 +162,19 @@ The Vue application is an installable responsive PWA. Capacitor can wrap the web
 - Canonical currency metadata, immutable live/manual/unavailable exchange-rate
   snapshots, exact rational conversion, and labeled optional reporting-currency
   balance summaries that preserve native totals
+- Versioned recurring expense templates with backend-only calendar previews,
+  PostgreSQL job dispatch/materialization, pause/resume/edit history, and
+  idempotent generated expenses
+- Transactional in-app notifications, per-channel preferences, encrypted FCM
+  web-push registrations, Resend email delivery, and creditor-only immediate or
+  scheduled payment reminders
+- Native-currency spending analytics and personal, category, and group monthly
+  budgets with exact current-expense progress and deduplicated 80/100 percent
+  threshold alerts
 
-No personal financial account, budget, recurring-expense, notification, or
-reporting module exists yet. External payment initiation and reconciliation,
-hosted storage/OCR, and cloud infrastructure remain deferred.
+Personal financial accounts and general report exports do not exist yet.
+External payment initiation and reconciliation, hosted storage/OCR, native push,
+and cloud infrastructure remain deferred.
 
 ## Roadmap
 
@@ -176,8 +185,8 @@ product plan.
 2. Accounts, friends, and groups with authorization boundaries.
 3. Expenses with multiple payers, split strategies, audit history, and deterministic ledger generation.
 4. Balances, partial/full settlements, debt simplification, activity, comments, and security audit.
-5. Budgets, recurring expenses, and notifications.
-6. Analytics, reports, administration, native packaging, and evidence-driven AI assistance.
+5. Budgets, recurring expenses, notifications, reminders, and analytics.
+6. Reports, administration, native packaging, and evidence-driven AI assistance.
 
 ## Important Decisions
 
@@ -187,6 +196,9 @@ product plan.
 - Derive expense settlement state from immutable allocation paths; never store a mutable settled flag.
 - Keep receipt files private behind storage/OCR interfaces and authenticated short-lived intents.
 - Preserve native currency obligations and treat converted summaries as explicit write-time-snapshot valuations.
+- Use PostgreSQL leasing and durable dedupe keys for background jobs; provider calls never run inside request transactions.
+- Treat recurring schedules as immutable revisions and generated occurrences as ordinary idempotent expenses.
+- Define spending as current expense responsibility in one native currency; settlements never alter spending analytics.
 - Keep the API client-agnostic and REST/OpenAPI based.
 - Keep shared workspace packages, Redis, queues, object storage, and provider integrations deferred until they solve a real need.
 - Maintain exactly this project knowledge document rather than parallel summaries or diaries.

@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import {
@@ -20,6 +20,8 @@ import {
 import { canEditGroup } from "./group-permissions";
 import { presentUser } from "./group-presenter";
 import { GroupsService } from "./groups.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { groupEmailToken } from "../notifications/invitation-email";
 
 @Injectable()
 export class GroupInvitationsService {
@@ -31,11 +33,18 @@ export class GroupInvitationsService {
     @Inject(GroupsService) private readonly groups: GroupsService,
     @Inject(ActivitiesService) private readonly activities: ActivitiesService,
     @Inject(AuditService) private readonly audit: AuditService,
+    @Inject(NotificationsService)
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(userId: string, groupId: string) {
-    const token = randomBytes(32).toString("base64url");
+    const id = randomUUID();
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000);
+    const token = groupEmailToken(
+      this.config.get("FRIEND_INVITE_SECRET", { infer: true }),
+      id,
+      expiresAt,
+    );
     const invitation = await this.prisma.withTransaction(async (database) => {
       const membership = await this.access.requireMembership(
         database,
@@ -46,6 +55,7 @@ export class GroupInvitationsService {
       if (!canEditGroup(membership.role)) throw groupForbidden();
       const created = await database.groupInvitation.create({
         data: {
+          id,
           groupId,
           createdById: userId,
           tokenDigest: this.digestToken(token),
@@ -69,6 +79,40 @@ export class GroupInvitationsService {
       inviteUrl: inviteUrl.toString(),
       expiresAt: invitation.expiresAt,
     };
+  }
+
+  async createEmail(userId: string, groupId: string, email: string) {
+    const id = randomUUID();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60_000);
+    const token = groupEmailToken(
+      this.config.get("FRIEND_INVITE_SECRET", { infer: true }),
+      id,
+      expiresAt,
+    );
+    await this.prisma.withTransaction(async (database) => {
+      const membership = await this.access.requireMembership(
+        database,
+        userId,
+        groupId,
+      );
+      await this.access.requireActiveGroup(database, groupId);
+      if (!canEditGroup(membership.role)) throw groupForbidden();
+      await database.groupInvitation.create({
+        data: {
+          id,
+          groupId,
+          createdById: userId,
+          tokenDigest: this.digestToken(token),
+          expiresAt,
+        },
+      });
+      await this.notifications.queueInvitationEmail(database, {
+        email,
+        kind: "GROUP",
+        invitationId: id,
+      });
+    });
+    return { accepted: true };
   }
 
   async list(

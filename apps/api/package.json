@@ -5,7 +5,9 @@
   "scripts": {
     "build": "nest build",
     "dev": "nest start --watch",
+    "dev:worker": "tsx watch src/worker.ts",
     "start": "node dist/main.js",
+    "start:worker": "node dist/worker.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -17,6 +19,7 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@js-temporal/polyfill": "^0.5.1",
     "@nestjs/common": "^11.1.29",
     "@nestjs/config": "^4.0.2",
     "@nestjs/core": "^11.1.29",
@@ -30,6 +33,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.2",
     "cookie-parser": "^1.4.7",
+    "firebase-admin": "^14.3.0",
     "google-auth-library": "^10.3.0",
     "helmet": "^8.1.0",
     "pg": "^8.16.3",

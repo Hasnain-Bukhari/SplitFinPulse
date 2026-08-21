@@ -43,6 +43,7 @@ const props = withDefaults(
       name: string;
       avatarUrl: string | null;
     }>;
+    recurring?: boolean;
   }>(),
   {
     groups: () => [],
@@ -53,6 +54,7 @@ const props = withDefaults(
     submitLabel: "Create expense",
     lockContext: false,
     peopleOverride: () => [],
+    recurring: false,
   },
 );
 
@@ -325,10 +327,12 @@ function buildInput(): ExpenseWriteInput | null {
     splitMethod: form.splitMethod,
     participants,
     ...(form.categoryId ? { categoryId: form.categoryId } : {}),
-    ...(attachmentIds.value.length
+    ...(!props.recurring && attachmentIds.value.length
       ? { attachmentIds: attachmentIds.value }
       : {}),
-    ...(valuation.value ? { valuationId: valuation.value.valuationId } : {}),
+    ...(!props.recurring && valuation.value
+      ? { valuationId: valuation.value.valuationId }
+      : {}),
   };
 }
 
@@ -336,17 +340,19 @@ const preview = useMutation({
   mutationFn: async () => {
     let input = buildInput();
     if (!input) throw new Error(localError.value);
-    valuationNotice.value = "";
-    try {
-      valuation.value = await api.valuation({
-        baseCurrency: input.currency,
-        effectiveDate: input.expenseDate,
-        amountMinor: input.totalMinor,
-      });
-    } catch {
-      valuation.value = undefined;
-      valuationNotice.value =
-        "Conversion is unavailable; this expense will remain usable in its native currency.";
+    if (!props.recurring) {
+      valuationNotice.value = "";
+      try {
+        valuation.value = await api.valuation({
+          baseCurrency: input.currency,
+          effectiveDate: input.expenseDate,
+          amountMinor: input.totalMinor,
+        });
+      } catch {
+        valuation.value = undefined;
+        valuationNotice.value =
+          "Conversion is unavailable; this expense will remain usable in its native currency.";
+      }
     }
     input = buildInput();
     if (!input) throw new Error(localError.value);
@@ -608,7 +614,7 @@ function submit(): void {
       >
     </Card>
 
-    <Card class="p-5 sm:p-6">
+    <Card v-if="!recurring" class="p-5 sm:p-6">
       <p class="section-kicker">Receipt</p>
       <h2 class="text-lg font-bold">Attach a receipt</h2>
       <label class="mt-3 block">
@@ -836,7 +842,10 @@ function submit(): void {
       <p v-if="localError || error" class="form-error mt-3" role="alert">
         {{ localError || error }}
       </p>
-      <p v-if="valuation" class="text-muted-foreground mt-3 text-xs">
+      <p
+        v-if="!recurring && valuation"
+        class="text-muted-foreground mt-3 text-xs"
+      >
         Conversion snapshot: {{ valuation.source }} ·
         {{ valuation.effectiveDate }} ·
         {{
@@ -845,7 +854,7 @@ function submit(): void {
             : "rates captured for this revision"
         }}
       </p>
-      <p v-if="reportingPreview" class="mt-1 text-xs">
+      <p v-if="!recurring && reportingPreview" class="mt-1 text-xs">
         Reporting preview:
         {{
           formatCurrency(
@@ -854,12 +863,12 @@ function submit(): void {
           )
         }}
       </p>
-      <p v-if="reportingQuote" class="mt-1 text-xs">
+      <p v-if="!recurring && reportingQuote" class="mt-1 text-xs">
         Exact rational rate: {{ reportingQuote.numerator }} /
         {{ reportingQuote.denominator }} {{ reportingQuote.quoteCurrency }}
       </p>
       <p
-        v-if="valuationNotice"
+        v-if="!recurring && valuationNotice"
         class="text-muted-foreground mt-3 text-xs"
         role="status"
       >
@@ -867,6 +876,7 @@ function submit(): void {
       </p>
       <div
         v-if="
+          !recurring &&
           valuation?.status === 'UNAVAILABLE' &&
           session.data.value?.user.defaultCurrency !== form.currency
         "

@@ -1,7 +1,6 @@
 import {
   createHash,
   createHmac,
-  randomBytes,
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
@@ -11,6 +10,8 @@ import type { Environment } from "../config/environment";
 import { PrismaService } from "../database/prisma.service";
 import { ApiException } from "../http/api.exception";
 import { FriendsService } from "./friends.service";
+import { NotificationsService } from "../notifications/notifications.service";
+import { friendEmailToken } from "../notifications/invitation-email";
 
 interface DecodedToken {
   id: string;
@@ -25,6 +26,8 @@ export class InvitationsService {
     @Inject(FriendsService) private readonly friends: FriendsService,
     @Inject(ConfigService)
     private readonly config: ConfigService<Environment, true>,
+    @Inject(NotificationsService)
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(userId: string) {
@@ -35,8 +38,11 @@ export class InvitationsService {
       Date.now() +
         this.config.get("FRIEND_INVITE_TTL_SECONDS", { infer: true }) * 1000,
     );
-    const unsigned = `${id}.${Math.floor(expiresAt.valueOf() / 1000)}.${randomBytes(24).toString("base64url")}`;
-    const token = `${unsigned}.${this.sign(unsigned)}`;
+    const token = friendEmailToken(
+      this.config.get("FRIEND_INVITE_SECRET", { infer: true }),
+      id,
+      expiresAt,
+    );
     await this.prisma.friendInvitation.create({
       data: {
         id,
@@ -50,6 +56,37 @@ export class InvitationsService {
       this.config.get("WEB_APP_URL", { infer: true }),
     ).toString();
     return { inviteUrl, expiresAt };
+  }
+
+  async createEmail(userId: string, email: string) {
+    const id = randomUUID();
+    const expiresAt = new Date(
+      Date.now() +
+        this.config.get("FRIEND_INVITE_TTL_SECONDS", { infer: true }) * 1000,
+    );
+    const token = friendEmailToken(
+      this.config.get("FRIEND_INVITE_SECRET", { infer: true }),
+      id,
+      expiresAt,
+    );
+    await this.prisma.withTransaction(async (database) => {
+      const user = await database.user.findUnique({ where: { id: userId } });
+      if (!user || user.status !== "ACTIVE") throw this.authRequired();
+      await database.friendInvitation.create({
+        data: {
+          id,
+          inviterId: userId,
+          tokenDigest: this.digest(token),
+          expiresAt,
+        },
+      });
+      await this.notifications.queueInvitationEmail(database, {
+        email,
+        kind: "FRIEND",
+        invitationId: id,
+      });
+    });
+    return { accepted: true };
   }
 
   async preview(token: string) {

@@ -14,6 +14,7 @@ export function presentUser(user: User): SessionEnvelope["user"] {
       expenseActivity: user.notifyExpenseActivity,
       reminders: user.notifyReminders,
       invitations: user.notifyInvitations,
+      budgetAlerts: user.notifyBudgetAlerts,
     },
     status: user.status,
   };

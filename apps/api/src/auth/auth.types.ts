@@ -37,6 +37,7 @@ export interface SessionEnvelope {
       expenseActivity: boolean;
       reminders: boolean;
       invitations: boolean;
+      budgetAlerts: boolean;
     };
     status: string;
   };

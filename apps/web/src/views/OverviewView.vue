@@ -26,6 +26,19 @@ const balances = useQuery(
   })),
 );
 const { formatCurrency } = useCurrencyFormatter();
+const currentMonth = new Date().toISOString().slice(0, 7);
+const budgets = useQuery({
+  queryKey: ["budgets", currentMonth],
+  queryFn: () => api.budgets(currentMonth),
+});
+const recentGroups = useQuery({
+  queryKey: ["groups", "dashboard"],
+  queryFn: () => api.groups("ACTIVE"),
+});
+const recentFriends = useQuery({
+  queryKey: ["friends", "dashboard"],
+  queryFn: () => api.friends(),
+});
 const summaryCards = computed(() => {
   const totals = balances.data.value?.totals ?? [];
   if (!totals.length)
@@ -192,6 +205,100 @@ const summaryCards = computed(() => {
           <span /><span /><span /><span />
         </div>
       </Card>
+    </div>
+    <div class="grid gap-4 lg:grid-cols-3">
+      <Card class="p-5"
+        ><div class="section-heading">
+          <h2 class="font-bold">Monthly budgets</h2>
+          <RouterLink to="/budgets" class="data-note">Manage</RouterLink>
+        </div>
+        <p
+          v-if="budgets.isPending.value"
+          class="text-muted-foreground mt-3 text-sm"
+        >
+          Loading budgets…
+        </p>
+        <p v-else-if="budgets.isError.value" class="form-error mt-3 text-sm">
+          Budgets are unavailable.
+        </p>
+        <p
+          v-else-if="!budgets.data.value?.items.length"
+          class="text-muted-foreground mt-3 text-sm"
+        >
+          No budgets for this month.
+        </p>
+        <ul v-else class="mt-3 space-y-2">
+          <li
+            v-for="item in budgets.data.value.items.slice(0, 3)"
+            :key="item.id"
+          >
+            <div class="flex justify-between text-sm">
+              <span>{{
+                item.group?.name ?? item.category?.name ?? "Personal"
+              }}</span
+              ><strong>{{ item.percentUsed.toFixed(0) }}%</strong>
+            </div>
+            <progress
+              class="w-full"
+              :value="Math.min(item.percentUsed, 100)"
+              max="100"
+            />
+          </li></ul
+      ></Card>
+      <Card class="p-5"
+        ><div class="section-heading">
+          <h2 class="font-bold">Recent groups</h2>
+          <RouterLink to="/groups" class="data-note">View all</RouterLink>
+        </div>
+        <p
+          v-if="recentGroups.isPending.value"
+          class="text-muted-foreground mt-3 text-sm"
+        >
+          Loading groups…
+        </p>
+        <p
+          v-else-if="recentGroups.isError.value"
+          class="form-error mt-3 text-sm"
+        >
+          Groups are unavailable.
+        </p>
+        <ul v-else class="mt-3 space-y-2">
+          <li
+            v-for="item in recentGroups.data.value?.items.slice(0, 4)"
+            :key="item.id"
+          >
+            <RouterLink :to="`/groups/${item.id}`">{{ item.name }}</RouterLink>
+          </li>
+        </ul></Card
+      >
+      <Card class="p-5"
+        ><div class="section-heading">
+          <h2 class="font-bold">Recent friends</h2>
+          <RouterLink to="/friends" class="data-note">View all</RouterLink>
+        </div>
+        <p
+          v-if="recentFriends.isPending.value"
+          class="text-muted-foreground mt-3 text-sm"
+        >
+          Loading friends…
+        </p>
+        <p
+          v-else-if="recentFriends.isError.value"
+          class="form-error mt-3 text-sm"
+        >
+          Friends are unavailable.
+        </p>
+        <ul v-else class="mt-3 space-y-2">
+          <li
+            v-for="item in recentFriends.data.value?.items.slice(0, 4)"
+            :key="item.friendshipId"
+          >
+            <RouterLink :to="`/friends/${item.friendshipId}/balance`">{{
+              item.user.name
+            }}</RouterLink>
+          </li>
+        </ul></Card
+      >
     </div>
   </div>
 </template>

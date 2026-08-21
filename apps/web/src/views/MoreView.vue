@@ -1,5 +1,14 @@
 <script setup lang="ts">
-import { Activity, Settings, UserRoundPlus, UsersRound } from "@lucide/vue";
+import {
+  Activity,
+  Bell,
+  CalendarClock,
+  ChartNoAxesCombined,
+  Gauge,
+  Settings,
+  UserRoundPlus,
+  UsersRound,
+} from "@lucide/vue";
 import { Card } from "@/components/ui/card";
 
 const destinations = [
@@ -20,6 +29,36 @@ const destinations = [
     description: "Authorized financial history",
     to: "/activity",
     icon: Activity,
+  },
+  {
+    label: "Notifications",
+    description: "Updates and unread items",
+    to: "/notifications",
+    icon: Bell,
+  },
+  {
+    label: "Recurring expenses",
+    description: "Automatic future expenses",
+    to: "/recurring-expenses",
+    icon: CalendarClock,
+  },
+  {
+    label: "Reminders",
+    description: "Payment reminder history",
+    to: "/reminders",
+    icon: Activity,
+  },
+  {
+    label: "Analytics",
+    description: "Spending trends and categories",
+    to: "/analytics",
+    icon: ChartNoAxesCombined,
+  },
+  {
+    label: "Budgets",
+    description: "Monthly spending limits",
+    to: "/budgets",
+    icon: Gauge,
   },
   {
     label: "Settings",

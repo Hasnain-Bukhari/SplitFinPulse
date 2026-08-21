@@ -48,12 +48,14 @@ can be attached and viewed but are not OCR-processed.
 
 ## Local development
 
-Start PostgreSQL, apply migrations, and launch both applications:
+Start PostgreSQL, apply migrations, and launch the API, web application, and
+PostgreSQL job worker:
 
 ```bash
 pnpm docker:db:up
 pnpm db:migrate:deploy
 pnpm dev
+pnpm dev:worker
 ```
 
 - Web: <http://localhost:5173>
@@ -63,7 +65,18 @@ pnpm dev
 - Liveness: <http://localhost:3000/health>
 - Readiness: <http://localhost:3000/ready>
 
-Run one application with `pnpm dev:api` or `pnpm dev:web`. Stop local PostgreSQL with `pnpm docker:db:down`; the named volume preserves data.
+Run one application with `pnpm dev:api` or `pnpm dev:web`. The worker executes
+recurring expenses, reminders, budget checks, and notification deliveries from
+the PostgreSQL-backed job queue; keep it running when testing those flows. Stop
+local PostgreSQL with `pnpm docker:db:down`; the named volume preserves data.
+
+Firebase Cloud Messaging and Resend are optional in local development. To test
+web push, configure the complete `FCM_*` service-account set and the complete
+`VITE_FIREBASE_*` web configuration in `.env`. To test transactional email,
+configure `RESEND_API_KEY` and a verified `EMAIL_FROM` identity. Set a distinct
+`PUSH_TOKEN_SECRET` to encrypt registered FCM tokens. The application never
+returns stored device-token material, and provider delivery remains outside API
+request transactions.
 
 ## Validation
 

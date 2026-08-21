@@ -30,6 +30,7 @@ describe("validateEnvironment", () => {
       ATTACHMENT_STORAGE_ROOT: "/tmp/splitfinpulse-attachments",
       ATTACHMENT_UPLOAD_SECRET: "invite-secret-that-is-at-least-32-characters",
       ATTACHMENT_MAX_BYTES: 10_485_760,
+      PUSH_TOKEN_SECRET: "invite-secret-that-is-at-least-32-characters",
     });
   });
 

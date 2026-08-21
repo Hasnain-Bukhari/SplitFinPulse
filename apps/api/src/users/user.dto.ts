@@ -23,6 +23,11 @@ export class NotificationPreferencesDto {
   @ApiProperty({ type: Boolean })
   @IsBoolean()
   invitations!: boolean;
+
+  @ApiPropertyOptional({ type: Boolean })
+  @IsOptional()
+  @IsBoolean()
+  budgetAlerts?: boolean;
 }
 
 export class UpdateProfileDto {

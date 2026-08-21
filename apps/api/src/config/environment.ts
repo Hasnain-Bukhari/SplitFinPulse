@@ -27,6 +27,12 @@ export interface Environment {
   ATTACHMENT_STORAGE_ROOT: string;
   ATTACHMENT_UPLOAD_SECRET: string;
   ATTACHMENT_MAX_BYTES: number;
+  PUSH_TOKEN_SECRET: string;
+  FCM_PROJECT_ID?: string;
+  FCM_CLIENT_EMAIL?: string;
+  FCM_PRIVATE_KEY?: string;
+  RESEND_API_KEY?: string;
+  EMAIL_FROM?: string;
 }
 
 function requiredString(config: Record<string, unknown>, key: string): string {
@@ -126,6 +132,26 @@ export function validateEnvironment(
     ["http:", "https:"],
   );
 
+  const fcm = [
+    config.FCM_PROJECT_ID,
+    config.FCM_CLIENT_EMAIL,
+    config.FCM_PRIVATE_KEY,
+  ];
+  if (
+    fcm.some(Boolean) &&
+    !fcm.every((value) => typeof value === "string" && value.trim())
+  ) {
+    throw new Error(
+      "FCM_PROJECT_ID, FCM_CLIENT_EMAIL and FCM_PRIVATE_KEY must be configured together",
+    );
+  }
+  if (
+    config.RESEND_API_KEY &&
+    !(typeof config.EMAIL_FROM === "string" && config.EMAIL_FROM.trim())
+  ) {
+    throw new Error("EMAIL_FROM is required when RESEND_API_KEY is configured");
+  }
+
   return {
     NODE_ENV: enumValue(config, "NODE_ENV", nodeEnvironments, "development"),
     PORT: port,
@@ -177,5 +203,27 @@ export function validateEnvironment(
       "ATTACHMENT_MAX_BYTES",
       10_485_760,
     ),
+    PUSH_TOKEN_SECRET:
+      typeof config.PUSH_TOKEN_SECRET === "string" &&
+      config.PUSH_TOKEN_SECRET.trim()
+        ? secret(config, "PUSH_TOKEN_SECRET")
+        : secret(config, "FRIEND_INVITE_SECRET"),
+    ...(typeof config.FCM_PROJECT_ID === "string" &&
+    config.FCM_PROJECT_ID.trim()
+      ? {
+          FCM_PROJECT_ID: config.FCM_PROJECT_ID.trim(),
+          FCM_CLIENT_EMAIL: String(config.FCM_CLIENT_EMAIL).trim(),
+          FCM_PRIVATE_KEY: String(config.FCM_PRIVATE_KEY)
+            .replace(/\\n/g, "\n")
+            .trim(),
+        }
+      : {}),
+    ...(typeof config.RESEND_API_KEY === "string" &&
+    config.RESEND_API_KEY.trim()
+      ? {
+          RESEND_API_KEY: config.RESEND_API_KEY.trim(),
+          EMAIL_FROM: String(config.EMAIL_FROM).trim(),
+        }
+      : {}),
   };
 }

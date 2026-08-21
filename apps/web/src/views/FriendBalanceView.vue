@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useQuery } from "@tanstack/vue-query";
+import { useMutation, useQuery } from "@tanstack/vue-query";
 import { computed, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,20 @@ const balances = useQuery(
       ),
   })),
 );
+const reminder = useMutation({
+  mutationFn: () => {
+    const amount = balances.data.value?.amounts.find(
+      (item) => BigInt(item.netMinor) > 0n,
+    );
+    const recipientId = balances.data.value?.friend.id;
+    if (!amount || !recipientId) throw new Error("No payable balance");
+    return api.createReminder({
+      recipientId,
+      friendshipId: friendshipId.value,
+      currency: amount.currency,
+    });
+  },
+});
 </script>
 
 <template>
@@ -82,6 +96,19 @@ const balances = useQuery(
             ><RouterLink :to="`/expenses/new?friendshipId=${friendshipId}`"
               >Add expense</RouterLink
             ></Button
+          >
+          <Button
+            v-if="
+              balances.data.value.amounts.some(
+                (amount) => BigInt(amount.netMinor) > 0n,
+              )
+            "
+            variant="outline"
+            :disabled="reminder.isPending.value"
+            @click="reminder.mutate()"
+            >{{
+              reminder.isSuccess.value ? "Reminder sent" : "Send reminder"
+            }}</Button
           >
         </div>
         <label class="text-sm"

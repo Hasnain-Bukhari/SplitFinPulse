@@ -13,5 +13,6 @@ export default defineConfig({
     url:
       process.env.DATABASE_URL ??
       "postgresql://splitfinpulse:splitfinpulse@localhost:5433/splitfinpulse?schema=public",
+    shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
   },
 });

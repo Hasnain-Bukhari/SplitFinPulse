@@ -2,6 +2,8 @@ import { HttpStatus, Inject, Injectable } from "@nestjs/common";
 import type { Prisma } from "../generated/prisma/client";
 import { PrismaService } from "../database/prisma.service";
 import { ApiException } from "../http/api.exception";
+import { NotificationsService } from "../notifications/notifications.service";
+import { JobsService } from "../jobs/jobs.service";
 
 type ActivityDatabase = PrismaService | Prisma.TransactionClient;
 
@@ -41,7 +43,12 @@ export interface RecordActivityInput {
 
 @Injectable()
 export class ActivitiesService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(NotificationsService)
+    private readonly notifications: NotificationsService,
+    @Inject(JobsService) private readonly jobs: JobsService,
+  ) {}
 
   async record(database: ActivityDatabase, input: RecordActivityInput) {
     const event = await database.activityEvent.create({
@@ -61,6 +68,23 @@ export class ActivitiesService {
       await database.activityAudience.createMany({
         data: userIds.map((userId) => ({ eventId: event.id, userId })),
         skipDuplicates: true,
+      });
+    }
+    await this.notifications.projectActivity(database, event.id, input);
+    const budgetAffectingTypes = new Set<string>([
+      activityTypes.expenseCreated,
+      activityTypes.expenseUpdated,
+      activityTypes.expenseDeleted,
+      activityTypes.expenseRestored,
+    ]);
+    if (
+      input.entityType === "EXPENSE" &&
+      budgetAffectingTypes.has(input.type)
+    ) {
+      await this.jobs.enqueue(database, {
+        type: "BUDGET_EVALUATE",
+        dedupeKey: `budget-evaluate:${event.id}`,
+        payload: { expenseId: input.entityId },
       });
     }
     return event;

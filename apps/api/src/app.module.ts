@@ -25,6 +25,12 @@ import { CategoriesModule } from "./categories/categories.module";
 import { SearchModule } from "./search/search.module";
 import { CurrenciesModule } from "./currencies/currencies.module";
 import { AttachmentsModule } from "./attachments/attachments.module";
+import { JobsModule } from "./jobs/jobs.module";
+import { RecurringExpensesModule } from "./recurring-expenses/recurring-expenses.module";
+import { NotificationsModule } from "./notifications/notifications.module";
+import { RemindersModule } from "./reminders/reminders.module";
+import { AnalyticsModule } from "./analytics/analytics.module";
+import { BudgetsModule } from "./budgets/budgets.module";
 
 @Module({
   imports: [
@@ -36,6 +42,8 @@ import { AttachmentsModule } from "./attachments/attachments.module";
     }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     DatabaseModule,
+    JobsModule,
+    NotificationsModule,
     HealthModule,
     AuthModule,
     UsersModule,
@@ -50,6 +58,10 @@ import { AttachmentsModule } from "./attachments/attachments.module";
     SearchModule,
     CurrenciesModule,
     AttachmentsModule,
+    RecurringExpensesModule,
+    RemindersModule,
+    AnalyticsModule,
+    BudgetsModule,
     AuditModule,
   ],
 })

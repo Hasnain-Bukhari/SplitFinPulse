@@ -10,6 +10,9 @@ export default defineConfig({
     vue(),
     tailwindcss(),
     VitePWA({
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
       registerType: "autoUpdate",
       includeAssets: [
         "favicon.ico",
@@ -49,10 +52,6 @@ export default defineConfig({
             purpose: "maskable",
           },
         ],
-      },
-      workbox: {
-        navigateFallback: "/index.html",
-        runtimeCaching: [],
       },
     }),
   ],

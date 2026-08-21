@@ -26,6 +26,13 @@ import SettleUpView from "@/views/SettleUpView.vue";
 import SettlementDetailView from "@/views/SettlementDetailView.vue";
 import ExpensesView from "@/views/ExpensesView.vue";
 import CategorySettingsView from "@/views/CategorySettingsView.vue";
+import RecurringExpensesView from "@/views/RecurringExpensesView.vue";
+import CreateRecurringExpenseView from "@/views/CreateRecurringExpenseView.vue";
+import RecurringExpenseDetailView from "@/views/RecurringExpenseDetailView.vue";
+import NotificationsView from "@/views/NotificationsView.vue";
+import AnalyticsView from "@/views/AnalyticsView.vue";
+import BudgetsView from "@/views/BudgetsView.vue";
+import RemindersView from "@/views/RemindersView.vue";
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -91,6 +98,54 @@ export const router = createRouter({
           name: "edit-expense",
           component: EditExpenseView,
           meta: { title: "Edit expense" },
+        },
+        {
+          path: "recurring-expenses",
+          name: "recurring-expenses",
+          component: RecurringExpensesView,
+          meta: { title: "Recurring expenses" },
+        },
+        {
+          path: "recurring-expenses/new",
+          name: "create-recurring-expense",
+          component: CreateRecurringExpenseView,
+          meta: { title: "Create recurring expense" },
+        },
+        {
+          path: "recurring-expenses/:id",
+          name: "recurring-expense-detail",
+          component: RecurringExpenseDetailView,
+          meta: { title: "Recurring expense" },
+        },
+        {
+          path: "recurring-expenses/:id/edit",
+          name: "edit-recurring-expense",
+          component: CreateRecurringExpenseView,
+          meta: { title: "Edit recurring expense" },
+        },
+        {
+          path: "notifications",
+          name: "notifications",
+          component: NotificationsView,
+          meta: { title: "Notifications" },
+        },
+        {
+          path: "reminders",
+          name: "reminders",
+          component: RemindersView,
+          meta: { title: "Reminders" },
+        },
+        {
+          path: "analytics",
+          name: "analytics",
+          component: AnalyticsView,
+          meta: { title: "Analytics" },
+        },
+        {
+          path: "budgets",
+          name: "budgets",
+          component: BudgetsView,
+          meta: { title: "Budgets" },
         },
         {
           path: "balances",

@@ -5,6 +5,27 @@ export async function deleteTraceRecords(
   userIds: readonly string[],
 ): Promise<void> {
   if (!userIds.length) return;
+  const notifications = await prisma.notification.findMany({
+    where: {
+      OR: [
+        { recipientId: { in: [...userIds] } },
+        { actorId: { in: [...userIds] } },
+      ],
+    },
+    select: { id: true },
+  });
+  await prisma.notificationDelivery.deleteMany({
+    where: { notificationId: { in: notifications.map((item) => item.id) } },
+  });
+  await prisma.notification.deleteMany({
+    where: { id: { in: notifications.map((item) => item.id) } },
+  });
+  await prisma.notificationChannelPreference.deleteMany({
+    where: { userId: { in: [...userIds] } },
+  });
+  await prisma.pushDevice.deleteMany({
+    where: { userId: { in: [...userIds] } },
+  });
   await prisma.$executeRawUnsafe(
     'ALTER TABLE "ActivityEvent" DISABLE TRIGGER USER; ALTER TABLE "ActivityAudience" DISABLE TRIGGER USER; ALTER TABLE "AuditEvent" DISABLE TRIGGER USER',
   );
